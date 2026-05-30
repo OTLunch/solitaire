@@ -41,7 +41,13 @@ Package the game as a mobile app and publish to Apple App Store and/or Google Pl
 ---
 
 ## Current Status
-> **Phase 1 in progress.** Game not yet started. Next step: begin building the prototype.
+> **Phase 1 ready to begin.** Project infrastructure is fully set up. Next step: spec out the game (game type, visual style, features), then build the prototype.
+
+## Setup Completed
+- Claude Code permissions configured (`.claude/settings.json`)
+- GitHub CLI installed and authenticated as **OTLunch**
+- Git initialized and connected to **https://github.com/OTLunch/solitaire**
+- First commit pushed to GitHub
 
 ---
 
