@@ -448,6 +448,7 @@ function drawFromStock() {
         state.waste.push(card);
     }
     renderGame();
+    saveGameState();
 }
 
 async function autoMoveToFoundation(sourceType, sourceCol) {
@@ -468,6 +469,7 @@ async function autoMoveToFoundation(sourceType, sourceCol) {
     else { state.tableau[sourceCol].pop(); flipTopCard(sourceCol); }
     state.foundations[fi].push(card);
     renderGame();
+    saveGameState();
     await checkWin();
     return true;
 }
@@ -499,6 +501,7 @@ function executeMove(src, targetType, targetIdx) {
     if (targetType === 'foundation') { state.foundations[targetIdx].push(cards[0]); }
     else { cards.forEach(c => state.tableau[targetIdx].push(c)); }
     renderGame();
+    saveGameState();
     checkWin();
     return true;
 }
@@ -660,5 +663,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     window.addEventListener('beforeunload', saveGameState);
+    window.addEventListener('pagehide', saveGameState);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) saveGameState(); });
     showPlayerModal();
 });
