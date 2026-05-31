@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(winget install *)",
-      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" auth login --hostname github.com --git-protocol https --web)"
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" auth login --hostname github.com --git-protocol https --web)",
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" repo create solitaire --public --source \"c:\\\\Users\\\\larry\\\\Desktop\\\\Claude Projects\\\\Solitaire\" --remote origin --push)"
     ]
   }
 }

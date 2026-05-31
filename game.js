@@ -20,12 +20,39 @@ let state = {
 
 let currentPlayer = null;
 let dragInfo = null;
+let history = [];  // undo stack
+
+// ===================== HISTORY / UNDO =====================
+function saveToHistory() {
+    history.push({
+        stock:       JSON.parse(JSON.stringify(state.stock)),
+        waste:       JSON.parse(JSON.stringify(state.waste)),
+        foundations: JSON.parse(JSON.stringify(state.foundations)),
+        tableau:     JSON.parse(JSON.stringify(state.tableau)),
+        seconds:     state.seconds
+    });
+    if (history.length > 100) history.shift();
+    document.getElementById('undo-btn').disabled = false;
+}
+
+function undoMove() {
+    if (history.length === 0) return;
+    const prev = history.pop();
+    state.stock       = prev.stock;
+    state.waste       = prev.waste;
+    state.foundations = prev.foundations;
+    state.tableau     = prev.tableau;
+    state.seconds     = prev.seconds;
+    document.getElementById('timer').textContent = formatTime(state.seconds);
+    document.getElementById('undo-btn').disabled = history.length === 0;
+    renderGame();
+}
 
 // ===================== STATS =====================
 function loadAllStats() {
     try {
         return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    } catch {
+    } catch (e) {
         return {};
     }
 }
@@ -37,25 +64,16 @@ function getPlayerStats(name) {
 function savePlayerStats(name, stats) {
     const all = loadAllStats();
     all[name] = stats;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(all)); } catch (e) {}
 }
 
 function recordWin(seconds) {
     const stats = getPlayerStats(currentPlayer);
     stats.played++;
     stats.wins++;
-    if (stats.bestTime === null || seconds < stats.bestTime) {
-        stats.bestTime = seconds;
-    }
+    if (stats.bestTime === null || seconds < stats.bestTime) stats.bestTime = seconds;
     savePlayerStats(currentPlayer, stats);
     updateStatsDisplay();
-}
-
-function recordGameStarted() {
-    // Recorded as a played game — win increments wins, otherwise it's a loss by default
-    // We count at start: played++. Win adds wins++. Loss = played - wins.
-    // Actually simpler: record played at end (win or abandon). Let's track on game end only.
-    // This function is a no-op — we record on win or on new-game-while-active.
 }
 
 function recordAbandoned() {
@@ -72,13 +90,12 @@ function updateStatsDisplay() {
     const losses = s.played - s.wins;
     const rate = s.played > 0 ? Math.round((s.wins / s.played) * 100) : 0;
     const best = s.bestTime !== null ? formatTime(s.bestTime) : '--:--';
-
     document.getElementById('player-name-display').textContent = currentPlayer;
-    document.getElementById('stat-played').textContent = s.played;
-    document.getElementById('stat-wins').textContent = s.wins;
-    document.getElementById('stat-losses').textContent = losses;
-    document.getElementById('stat-rate').textContent = rate + '%';
-    document.getElementById('stat-best').textContent = best;
+    document.getElementById('stat-played').textContent  = s.played;
+    document.getElementById('stat-wins').textContent    = s.wins;
+    document.getElementById('stat-losses').textContent  = losses;
+    document.getElementById('stat-rate').textContent    = rate + '%';
+    document.getElementById('stat-best').textContent    = best;
 }
 
 // ===================== TIMER =====================
@@ -93,10 +110,7 @@ function startTimer() {
 }
 
 function stopTimer() {
-    if (state.timerInterval) {
-        clearInterval(state.timerInterval);
-        state.timerInterval = null;
-    }
+    if (state.timerInterval) { clearInterval(state.timerInterval); state.timerInterval = null; }
 }
 
 function formatTime(s) {
@@ -150,11 +164,7 @@ function selectPlayer(name) {
 // ===================== DECK =====================
 function createDeck() {
     const deck = [];
-    SUITS.forEach(suit => {
-        VALUES.forEach(value => {
-            deck.push({ suit, value, faceUp: false });
-        });
-    });
+    SUITS.forEach(suit => VALUES.forEach(value => deck.push({ suit, value, faceUp: false })));
     return deck;
 }
 
@@ -171,22 +181,21 @@ function numVal(card) { return NUM_VAL[card.value]; }
 
 // ===================== GAME SETUP =====================
 function startNewGame(countAbandoned = true) {
-    if (countAbandoned && state.gameActive && !state.gameWon) {
-        recordAbandoned();
-    }
+    if (countAbandoned && state.gameActive && !state.gameWon) recordAbandoned();
 
     stopTimer();
+    history = [];
+    document.getElementById('undo-btn').disabled = true;
     document.getElementById('win-modal').classList.add('hidden');
 
     const deck = shuffle(createDeck());
     state.stock = [];
     state.waste = [];
     state.foundations = [[],[],[],[]];
-    state.tableau = [[],[],[],[],[],[],[]];
+    state.tableau     = [[],[],[],[],[],[],[]];
     state.gameWon = false;
     state.gameActive = true;
 
-    // Deal to tableau
     let idx = 0;
     for (let col = 0; col < 7; col++) {
         for (let row = 0; row <= col; row++) {
@@ -195,11 +204,7 @@ function startNewGame(countAbandoned = true) {
             state.tableau[col].push(card);
         }
     }
-
-    // Remaining cards to stock
-    while (idx < deck.length) {
-        state.stock.push({ ...deck[idx++], faceUp: false });
-    }
+    while (idx < deck.length) state.stock.push({ ...deck[idx++], faceUp: false });
 
     startTimer();
     renderGame();
@@ -222,15 +227,58 @@ function canMoveToTableau(card, col) {
 }
 
 function findFoundationFor(card) {
-    for (let i = 0; i < 4; i++) {
-        if (canMoveToFoundation(card, i)) return i;
-    }
+    for (let i = 0; i < 4; i++) { if (canMoveToFoundation(card, i)) return i; }
     return -1;
+}
+
+// ===================== AVAILABLE MOVE CHECK =====================
+function hasAvailableMove() {
+    // Can still draw from stock
+    if (state.stock.length > 0) return true;
+
+    // Waste top card can go somewhere
+    if (state.waste.length > 0) {
+        const wc = state.waste[state.waste.length - 1];
+        if (findFoundationFor(wc) !== -1) return true;
+        for (let c = 0; c < 7; c++) { if (canMoveToTableau(wc, c)) return true; }
+        // Waste can be recycled to stock — still a "move" available
+        return true;
+    }
+
+    // Check all tableau columns
+    for (let col = 0; col < 7; col++) {
+        const cards = state.tableau[col];
+        if (cards.length === 0) continue;
+        const firstUp = cards.findIndex(c => c.faceUp);
+        if (firstUp === -1) continue;
+        // Top card → foundation?
+        if (findFoundationFor(cards[cards.length - 1]) !== -1) return true;
+        // Any face-up sequence → another column?
+        for (let i = firstUp; i < cards.length; i++) {
+            for (let c = 0; c < 7; c++) {
+                if (c !== col && canMoveToTableau(cards[i], c)) return true;
+            }
+        }
+    }
+    return false;
+}
+
+function updateMoveIndicator() {
+    const el = document.getElementById('move-indicator');
+    if (!state.gameActive || state.gameWon) { el.textContent = ''; el.className = ''; return; }
+    if (hasAvailableMove()) {
+        el.textContent = '✓ Moves available';
+        el.className = 'moves-ok';
+    } else {
+        el.textContent = '✗ No moves available — try a new game';
+        el.className = 'moves-none';
+    }
 }
 
 // ===================== GAME MOVES =====================
 function drawFromStock() {
     if (!state.gameActive) return;
+    saveToHistory();
     if (state.stock.length === 0) {
         if (state.waste.length === 0) return;
         state.stock = state.waste.reverse().map(c => ({ ...c, faceUp: false }));
@@ -258,6 +306,8 @@ function autoMoveToFoundation(sourceType, sourceCol) {
     const fi = findFoundationFor(card);
     if (fi === -1) return false;
 
+    saveToHistory();
+
     if (sourceType === 'waste') {
         state.waste.pop();
     } else {
@@ -272,7 +322,6 @@ function autoMoveToFoundation(sourceType, sourceCol) {
 }
 
 function executeMove(src, targetType, targetIdx) {
-    // src: { type: 'waste'|'tableau'|'foundation', col: number, cardIdx: number }
     let cards;
 
     if (src.type === 'waste') {
@@ -288,7 +337,6 @@ function executeMove(src, targetType, targetIdx) {
         cards = col.slice(src.cardIdx);
     }
 
-    // Validate
     if (targetType === 'foundation') {
         if (cards.length !== 1) return false;
         if (!canMoveToFoundation(cards[0], targetIdx)) return false;
@@ -296,7 +344,8 @@ function executeMove(src, targetType, targetIdx) {
         if (!canMoveToTableau(cards[0], targetIdx)) return false;
     }
 
-    // Remove from source
+    saveToHistory();
+
     if (src.type === 'waste') {
         state.waste.pop();
     } else if (src.type === 'foundation') {
@@ -306,7 +355,6 @@ function executeMove(src, targetType, targetIdx) {
         flipTopCard(src.col);
     }
 
-    // Add to target
     if (targetType === 'foundation') {
         state.foundations[targetIdx].push(cards[0]);
     } else {
@@ -320,9 +368,7 @@ function executeMove(src, targetType, targetIdx) {
 
 function flipTopCard(col) {
     const c = state.tableau[col];
-    if (c.length > 0 && !c[c.length - 1].faceUp) {
-        c[c.length - 1].faceUp = true;
-    }
+    if (c.length > 0 && !c[c.length - 1].faceUp) c[c.length - 1].faceUp = true;
 }
 
 function checkWin() {
@@ -335,7 +381,6 @@ function checkWin() {
 
     const prevBest = getPlayerStats(currentPlayer).bestTime;
     const isNewBest = prevBest === null || state.seconds < prevBest;
-
     recordWin(state.seconds);
 
     setTimeout(() => {
@@ -354,13 +399,13 @@ function renderGame() {
     renderWaste();
     renderFoundations();
     renderTableau();
+    updateMoveIndicator();
 }
 
 function renderStock() {
     const el = document.getElementById('stock');
     el.innerHTML = '';
     el.className = 'pile';
-
     if (state.stock.length > 0) {
         const back = document.createElement('div');
         back.className = 'card face-down';
@@ -389,7 +434,6 @@ function renderWaste() {
     });
     cardEl.addEventListener('dragend', () => cardEl.classList.remove('dragging'));
     cardEl.addEventListener('dblclick', () => autoMoveToFoundation('waste', -1));
-
     el.appendChild(cardEl);
 }
 
@@ -403,8 +447,6 @@ function renderFoundations() {
             const card = f[f.length - 1];
             const cardEl = makeCard(card);
             cardEl.style.position = 'relative';
-
-            // Allow dragging back from foundation to tableau
             cardEl.draggable = true;
             cardEl.addEventListener('dragstart', e => {
                 dragInfo = { type: 'foundation', col: i, cardIdx: f.length - 1 };
@@ -412,7 +454,6 @@ function renderFoundations() {
                 setTimeout(() => cardEl.classList.add('dragging'), 0);
             });
             cardEl.addEventListener('dragend', () => cardEl.classList.remove('dragging'));
-
             el.appendChild(cardEl);
         }
 
@@ -429,9 +470,7 @@ function renderFoundations() {
 }
 
 function renderTableau() {
-    for (let col = 0; col < 7; col++) {
-        renderTableauCol(col);
-    }
+    for (let col = 0; col < 7; col++) renderTableauCol(col);
 }
 
 function renderTableauCol(col) {
@@ -443,7 +482,7 @@ function renderTableauCol(col) {
 
     cards.forEach((card, i) => {
         const cardEl = makeCard(card);
-        cardEl.style.top = `${y}px`;
+        cardEl.style.top  = `${y}px`;
         cardEl.style.left = '0';
 
         if (card.faceUp) {
@@ -453,9 +492,7 @@ function renderTableauCol(col) {
                 dragInfo = { type: 'tableau', col, cardIdx: i };
                 e.dataTransfer.effectAllowed = 'move';
                 setTimeout(() => {
-                    for (let j = i; j < el.children.length; j++) {
-                        el.children[j].classList.add('dragging');
-                    }
+                    for (let j = i; j < el.children.length; j++) el.children[j].classList.add('dragging');
                 }, 0);
             });
 
@@ -463,7 +500,6 @@ function renderTableauCol(col) {
                 Array.from(el.querySelectorAll('.dragging')).forEach(c => c.classList.remove('dragging'));
             });
 
-            // Double-click top face-up card → auto move to foundation
             if (i === cards.length - 1) {
                 cardEl.addEventListener('dblclick', () => autoMoveToFoundation('tableau', col));
             }
@@ -491,50 +527,39 @@ function renderTableauCol(col) {
 
 function makeCard(card) {
     const el = document.createElement('div');
+    if (!card.faceUp) { el.className = 'card face-down'; return el; }
 
-    if (!card.faceUp) {
-        el.className = 'card face-down';
-        return el;
-    }
-
-    const color = isRed(card) ? 'red' : 'black';
-    el.className = `card ${color}`;
-
+    el.className = `card ${isRed(card) ? 'red' : 'black'}`;
     const sym = SYMBOLS[card.suit];
     el.innerHTML = `
         <span class="corner corner-tl">${card.value}<span class="corner-suit">${sym}</span></span>
         <span class="card-center-suit">${sym}</span>
         <span class="corner corner-br">${card.value}<span class="corner-suit">${sym}</span></span>
     `;
-
     return el;
 }
 
 // ===================== EVENT LISTENERS =====================
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('stock').addEventListener('click', drawFromStock);
-
+    document.getElementById('undo-btn').addEventListener('click', undoMove);
+    document.getElementById('undo-btn').disabled = true;
     document.getElementById('new-game-btn').addEventListener('click', () => startNewGame(true));
-
     document.getElementById('change-player-btn').addEventListener('click', () => {
         recordAbandoned();
         state.gameActive = false;
         showPlayerModal();
     });
-
     document.getElementById('play-again-btn').addEventListener('click', () => startNewGame(false));
-
     document.getElementById('start-btn').addEventListener('click', () => {
         const name = document.getElementById('player-name-input').value.trim();
         if (name) selectPlayer(name);
     });
-
     document.getElementById('player-name-input').addEventListener('keydown', e => {
         if (e.key === 'Enter') {
             const name = document.getElementById('player-name-input').value.trim();
             if (name) selectPlayer(name);
         }
     });
-
     showPlayerModal();
 });

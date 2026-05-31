@@ -258,13 +258,15 @@ button:active {
 /* ===================== MODALS ===================== */
 .modal {
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     background: rgba(0, 0, 0, 0.65);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 200;
-    backdrop-filter: blur(3px);
 }
 
 .modal.hidden {
@@ -354,6 +356,42 @@ button:active {
 
 #start-btn:hover {
     background: rgba(255, 255, 255, 0.3);
+}
+
+/* Leaderboard link */
+#leaderboard-link {
+    font-size: 13px;
+    color: #fff;
+    text-decoration: none;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.25);
+    padding: 6px 14px;
+    border-radius: 6px;
+    transition: background 0.15s;
+}
+#leaderboard-link:hover { background: rgba(255,255,255,0.25); }
+
+/* Undo button disabled state */
+#undo-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+/* Footer move indicator */
+#game-footer {
+    text-align: center;
+    padding: 12px;
+    font-size: 14px;
+    min-height: 40px;
+}
+
+#move-indicator.moves-ok {
+    color: #7effa0;
+}
+
+#move-indicator.moves-none {
+    color: #ff8080;
+    font-weight: 600;
 }
 
 /* Win modal */

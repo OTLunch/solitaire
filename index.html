@@ -46,7 +46,9 @@
         </div>
         <div id="game-controls">
             <span id="timer">0:00</span>
+            <button id="undo-btn" title="Undo last move">↩ Undo</button>
             <button id="new-game-btn">New Game</button>
+            <a href="leaderboard.html" id="leaderboard-link">🏆 Leaderboard</a>
         </div>
     </header>
 
@@ -71,6 +73,11 @@
             <div id="tableau-6" class="pile tableau" data-col="6"></div>
         </div>
     </main>
+
+    <!-- Footer: move indicator -->
+    <footer id="game-footer">
+        <span id="move-indicator"></span>
+    </footer>
 
     <script src="game.js"></script>
 </body>
