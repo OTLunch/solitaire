@@ -454,8 +454,8 @@ button:active {
     background: rgba(255, 255, 255, 0.3);
 }
 
-/* ===================== IPAD / TABLET ===================== */
-@media (min-width: 600px) and (max-width: 1200px) and (pointer: coarse) {
+/* ===================== IPAD / TABLET (small–medium) ===================== */
+@media (min-width: 600px) and (max-width: 1023px) and (pointer: coarse) {
     .corner {
         font-size: 30px;
     }
@@ -490,5 +490,51 @@ button:active {
     button, #leaderboard-link {
         font-size: 15px;
         padding: 8px 16px;
+    }
+}
+
+/* ===================== LARGE IPAD (12–13 inch) ===================== */
+@media (min-width: 1024px) and (pointer: coarse) {
+    .corner {
+        font-size: 38px;
+    }
+    .corner-suit {
+        font-size: 32px;
+        margin-top: 4px;
+    }
+    .card-center-suit {
+        font-size: 60px;
+    }
+    .card {
+        width: 116px;
+        height: 163px;
+        border-radius: 14px;
+    }
+    .pile {
+        width: 116px;
+        min-height: 163px;
+    }
+    #board {
+        padding: 20px 24px;
+        gap: 20px;
+    }
+    #top-row, #tableau-row {
+        gap: 14px;
+    }
+    .stat span:last-child {
+        font-size: 26px;
+    }
+    .stat-label {
+        font-size: 13px;
+    }
+    #timer {
+        font-size: 34px;
+    }
+    #player-name-display {
+        font-size: 20px;
+    }
+    button, #leaderboard-link {
+        font-size: 16px;
+        padding: 10px 18px;
     }
 }

@@ -327,6 +327,13 @@ function shuffle(deck) {
 function isRed(card) { return RED_SUITS.has(card.suit); }
 function numVal(card) { return NUM_VAL[card.value]; }
 
+function cardMetrics() {
+    const touch = 'ontouchstart' in window;
+    if (touch && window.innerWidth >= 1024) return { h: 163, faceUp: 52, faceDown: 32 };
+    if (touch && window.innerWidth >= 600)  return { h: 136, faceUp: 42, faceDown: 26 };
+    return { h: 116, faceUp: 36, faceDown: 22 };
+}
+
 // ===================== GAME SETUP =====================
 async function startNewGame(countAbandoned = true) {
     if (countAbandoned && state.gameActive && !state.gameWon) await recordAbandoned();
@@ -716,6 +723,7 @@ function renderTableauCol(col) {
     const el = document.getElementById(`tableau-${col}`);
     el.innerHTML = '';
     const cards = state.tableau[col];
+    const m = cardMetrics();
     let y = 0;
     cards.forEach((card, i) => {
         const cardEl = makeCard(card);
@@ -733,11 +741,11 @@ function renderTableauCol(col) {
             if (i === cards.length - 1)
                 cardEl.addEventListener('dblclick', () => autoMoveToFoundation('tableau', col));
             addTouchDrag(cardEl, tabInfo);
-            y += 36;
-        } else { y += 22; }
+            y += m.faceUp;
+        } else { y += m.faceDown; }
         el.appendChild(cardEl);
     });
-    el.style.minHeight = `${Math.max(y + 116, 116)}px`;
+    el.style.minHeight = `${Math.max(y + m.h, m.h)}px`;
     el.ondragover = e => { e.preventDefault(); el.classList.add('drag-over'); };
     el.ondragleave = e => { if (!el.contains(e.relatedTarget)) el.classList.remove('drag-over'); };
     el.ondrop = e => {
