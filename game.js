@@ -294,6 +294,7 @@ async function startNewGame(countAbandoned = true) {
     stopTimer();
     clearSavedGame();
     history = [];
+    autoCompleting = false;
     document.getElementById('undo-btn').disabled = true;
     document.getElementById('win-modal').classList.add('hidden');
 
@@ -434,6 +435,85 @@ function flashElement(el) {
     el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
 }
 
+// ===================== AUTO-COMPLETE =====================
+let autoCompleting = false;
+
+function allCardsRevealed() {
+    if (!state.gameActive || state.gameWon) return false;
+    if (state.stock.length > 0) return false;
+    for (const col of state.tableau) {
+        if (col.some(card => !card.faceUp)) return false;
+    }
+    return true;
+}
+
+async function autoComplete() {
+    if (autoCompleting) return;
+    autoCompleting = true;
+
+    const delay = ms => new Promise(r => setTimeout(r, ms));
+
+    while (true) {
+        const total = state.foundations.reduce((sum, f) => sum + f.length, 0);
+        if (total === 52) { await checkWin(); break; }
+
+        let moved = false;
+
+        // Waste → foundation
+        if (!moved && state.waste.length > 0) {
+            const fi = findFoundationFor(state.waste[state.waste.length - 1]);
+            if (fi !== -1) {
+                state.foundations[fi].push(state.waste.pop());
+                moved = true;
+            }
+        }
+
+        // Tableau top → foundation
+        if (!moved) {
+            for (let col = 0; col < 7; col++) {
+                const cards = state.tableau[col];
+                if (!cards.length) continue;
+                const fi = findFoundationFor(cards[cards.length - 1]);
+                if (fi !== -1) {
+                    state.foundations[fi].push(cards.pop());
+                    moved = true;
+                    break;
+                }
+            }
+        }
+
+        // Tableau → tableau to unblock a foundation move
+        if (!moved) {
+            outer:
+            for (let col = 0; col < 7; col++) {
+                const cards = state.tableau[col];
+                for (let i = 0; i < cards.length; i++) {
+                    if (!cards[i].faceUp) continue;
+                    for (let tc = 0; tc < 7; tc++) {
+                        if (tc !== col && canMoveToTableau(cards[i], tc)) {
+                            const seq = cards.splice(i);
+                            seq.forEach(c => state.tableau[tc].push(c));
+                            moved = true;
+                            break outer;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!moved) break;
+
+        renderGame();
+        await delay(80);
+    }
+
+    autoCompleting = false;
+}
+
+function maybeAutoComplete() {
+    if (!autoCompleting && allCardsRevealed()) autoComplete();
+}
+
 // ===================== GAME MOVES =====================
 function drawFromStock() {
     if (!state.gameActive) return;
@@ -449,6 +529,7 @@ function drawFromStock() {
     }
     renderGame();
     saveGameState();
+    maybeAutoComplete();
 }
 
 async function autoMoveToFoundation(sourceType, sourceCol) {
@@ -471,6 +552,7 @@ async function autoMoveToFoundation(sourceType, sourceCol) {
     renderGame();
     saveGameState();
     await checkWin();
+    maybeAutoComplete();
     return true;
 }
 
@@ -503,6 +585,7 @@ function executeMove(src, targetType, targetIdx) {
     renderGame();
     saveGameState();
     checkWin();
+    maybeAutoComplete();
     return true;
 }
 
