@@ -23,6 +23,78 @@ let currentPlayer = null;
 let dragInfo = null;
 let history = [];  // undo stack
 
+// ===================== TOUCH DRAG SUPPORT =====================
+const touch = { active: false, clone: null, sourceEl: null, offsetX: 0, offsetY: 0 };
+
+function addTouchDrag(cardEl, info) {
+    cardEl.addEventListener('touchstart', e => {
+        e.preventDefault();
+        const t = e.touches[0];
+        const rect = cardEl.getBoundingClientRect();
+
+        dragInfo = info;
+        touch.sourceEl = cardEl;
+        touch.offsetX = t.clientX - rect.left;
+        touch.offsetY = t.clientY - rect.top;
+
+        const clone = cardEl.cloneNode(true);
+        clone.style.cssText = `position:fixed;width:${rect.width}px;height:${rect.height}px;` +
+            `left:${rect.left}px;top:${rect.top}px;opacity:0.85;z-index:9999;` +
+            `pointer-events:none;box-shadow:4px 8px 20px rgba(0,0,0,0.55);` +
+            `transform:scale(1.06);border-radius:10px;transition:none;`;
+        document.body.appendChild(clone);
+        touch.clone = clone;
+        touch.active = true;
+        cardEl.style.opacity = '0.3';
+    }, { passive: false });
+}
+
+document.addEventListener('touchmove', e => {
+    if (!touch.active || !touch.clone) return;
+    e.preventDefault();
+    const t = e.touches[0];
+    touch.clone.style.left = (t.clientX - touch.offsetX) + 'px';
+    touch.clone.style.top  = (t.clientY - touch.offsetY) + 'px';
+}, { passive: false });
+
+document.addEventListener('touchend', e => {
+    if (!touch.active) return;
+    e.preventDefault();
+    const t = e.changedTouches[0];
+
+    if (touch.clone) { touch.clone.remove(); touch.clone = null; }
+    touch.active = false;
+
+    if (!dragInfo) { renderGame(); return; }
+
+    // Find drop target underneath finger
+    const el = document.elementFromPoint(t.clientX, t.clientY);
+    let node = el;
+    let moved = false;
+
+    while (node && node !== document.body) {
+        if (node.id && node.id.startsWith('foundation-')) {
+            const idx = parseInt(node.dataset.index);
+            if (!isNaN(idx)) { moved = executeMove(dragInfo, 'foundation', idx); break; }
+        }
+        if (node.dataset && node.dataset.col !== undefined) {
+            const col = parseInt(node.dataset.col);
+            if (!isNaN(col)) { moved = executeMove(dragInfo, 'tableau', col); break; }
+        }
+        node = node.parentElement;
+    }
+
+    dragInfo = null;
+    if (!moved) renderGame();
+}, { passive: false });
+
+document.addEventListener('touchcancel', () => {
+    if (touch.clone) { touch.clone.remove(); touch.clone = null; }
+    touch.active = false;
+    dragInfo = null;
+    renderGame();
+});
+
 // ===================== HISTORY / UNDO =====================
 function saveToHistory() {
     history.push({
@@ -550,13 +622,15 @@ function renderWaste() {
     cardEl.style.position = 'relative';
     cardEl.draggable = true;
 
+    const wasteInfo = { type: 'waste', col: -1, cardIdx: 0 };
     cardEl.addEventListener('dragstart', e => {
-        dragInfo = { type: 'waste', col: -1, cardIdx: 0 };
+        dragInfo = wasteInfo;
         e.dataTransfer.effectAllowed = 'move';
         setTimeout(() => cardEl.classList.add('dragging'), 0);
     });
     cardEl.addEventListener('dragend', () => cardEl.classList.remove('dragging'));
     cardEl.addEventListener('dblclick', () => autoMoveToFoundation('waste', -1));
+    addTouchDrag(cardEl, wasteInfo);
     el.appendChild(cardEl);
 }
 
@@ -570,13 +644,15 @@ function renderFoundations() {
             const card = f[f.length - 1];
             const cardEl = makeCard(card);
             cardEl.style.position = 'relative';
+            const foundInfo = { type: 'foundation', col: i, cardIdx: f.length - 1 };
             cardEl.draggable = true;
             cardEl.addEventListener('dragstart', e => {
-                dragInfo = { type: 'foundation', col: i, cardIdx: f.length - 1 };
+                dragInfo = foundInfo;
                 e.dataTransfer.effectAllowed = 'move';
                 setTimeout(() => cardEl.classList.add('dragging'), 0);
             });
             cardEl.addEventListener('dragend', () => cardEl.classList.remove('dragging'));
+            addTouchDrag(cardEl, foundInfo);
             el.appendChild(cardEl);
         }
 
@@ -609,10 +685,11 @@ function renderTableauCol(col) {
         cardEl.style.left = '0';
 
         if (card.faceUp) {
+            const tabInfo = { type: 'tableau', col, cardIdx: i };
             cardEl.draggable = true;
 
             cardEl.addEventListener('dragstart', e => {
-                dragInfo = { type: 'tableau', col, cardIdx: i };
+                dragInfo = tabInfo;
                 e.dataTransfer.effectAllowed = 'move';
                 setTimeout(() => {
                     for (let j = i; j < el.children.length; j++) el.children[j].classList.add('dragging');
@@ -627,6 +704,7 @@ function renderTableauCol(col) {
                 cardEl.addEventListener('dblclick', () => autoMoveToFoundation('tableau', col));
             }
 
+            addTouchDrag(cardEl, tabInfo);
             y += 36;
         } else {
             y += 22;
@@ -665,6 +743,7 @@ function makeCard(card) {
 // ===================== EVENT LISTENERS =====================
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('stock').addEventListener('click', drawFromStock);
+    document.getElementById('stock').addEventListener('touchend', e => { e.preventDefault(); drawFromStock(); });
     document.getElementById('move-indicator').addEventListener('click', flashAvailableMove);
     document.getElementById('undo-btn').addEventListener('click', undoMove);
     document.getElementById('undo-btn').disabled = true;
