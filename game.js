@@ -436,6 +436,14 @@ function hasAvailableMove() {
 function updateMoveIndicator() {
     const el = document.getElementById('move-indicator');
     if (!state.gameActive || state.gameWon) { el.textContent = ''; el.className = ''; return; }
+    el.textContent = 'Check for moves';
+    el.className = 'moves-check';
+}
+
+function checkAndShowMoves() {
+    const el = document.getElementById('move-indicator');
+    if (el.className === 'moves-ok') { flashAvailableMove(); return; }
+    if (!state.gameActive) return;
     if (hasAvailableMove()) {
         el.textContent = '✓ Moves available — click to highlight';
         el.className = 'moves-ok';
@@ -778,7 +786,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('stock').addEventListener('touchend', e => { e.preventDefault(); drawFromStock(); });
     document.getElementById('undo-btn').addEventListener('click', undoMove);
     document.getElementById('undo-btn').disabled = true;
-    document.getElementById('move-indicator').addEventListener('click', flashAvailableMove);
+    document.getElementById('move-indicator').addEventListener('click', checkAndShowMoves);
 
     document.getElementById('new-game-btn').addEventListener('click', async () => {
         await startNewGame(true);

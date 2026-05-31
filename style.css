@@ -394,6 +394,19 @@ button:active {
     white-space: nowrap;
 }
 
+#move-indicator.moves-check {
+    color: #fff;
+    cursor: pointer;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.25);
+    padding: 6px 12px;
+    border-radius: 6px;
+}
+
+#move-indicator.moves-check:hover {
+    background: rgba(255,255,255,0.25);
+}
+
 #move-indicator.moves-ok {
     color: #7effa0;
     cursor: pointer;
