@@ -21,6 +21,7 @@ let currentPlayer = null;
 let playerCache   = null;   // { name, played, wins, best_time }
 let dragInfo      = null;
 let history       = [];
+let selectedCard  = null;   // { type, col, cardIdx } — click-to-move selection
 
 // ===================== TOUCH DRAG =====================
 const touch = { active: false, clone: null, sourceEl: null, offsetX: 0, offsetY: 0, moved: false, startX: 0, startY: 0 };
@@ -94,11 +95,13 @@ document.addEventListener('touchend', e => {
             return;
         }
 
-        // Single tap — restore card, store tap info, no re-render needed
+        // Single tap — handle click-to-move selection
         lastTapTime = tapKey ? now : 0;
         lastTapKey  = tapKey;
+        const tapInfo = { ...dragInfo };
         dragInfo = null;
         if (touch.sourceEl) touch.sourceEl.style.opacity = '';
+        handleCardClickSelect(tapInfo);
         return;
     }
 
@@ -119,6 +122,25 @@ document.addEventListener('touchend', e => {
     }
     dragInfo = null;
     if (!moved) renderGame();
+}, { passive: false });
+
+// Handles taps on empty columns/foundations when a card is selected (touch.active is false in that case)
+document.addEventListener('touchend', e => {
+    if (touch.active) return;
+    if (!selectedCard || !state.gameActive) return;
+    const t = e.changedTouches[0];
+    let node = document.elementFromPoint(t.clientX, t.clientY);
+    while (node && node !== document.body) {
+        if (node.id && node.id.startsWith('foundation-')) {
+            const idx = parseInt(node.dataset.index);
+            if (!isNaN(idx)) { e.preventDefault(); handleDestinationClick('foundation', idx); return; }
+        }
+        if (node.classList && node.classList.contains('tableau')) {
+            const col = parseInt(node.dataset.col);
+            if (!isNaN(col)) { e.preventDefault(); handleDestinationClick('tableau', col); return; }
+        }
+        node = node.parentElement;
+    }
 }, { passive: false });
 
 document.addEventListener('touchcancel', () => {
@@ -345,6 +367,7 @@ async function startNewGame(countAbandoned = true) {
     clearSavedGame();
     history = [];
     autoCompleting = false;
+    selectedCard = null;
     document.getElementById('undo-btn').disabled = true;
     document.getElementById('win-modal').classList.add('hidden');
 
@@ -655,6 +678,7 @@ async function checkWin() {
     const total = state.foundations.reduce((sum, f) => sum + f.length, 0);
     if (total !== 52) return;
     state.gameWon = true; state.gameActive = false;
+    selectedCard = null;
     stopTimer();
     clearSavedGame();
     const prevBest = playerCache ? playerCache.best_time : null;
@@ -669,9 +693,76 @@ async function checkWin() {
     }, 400);
 }
 
+// ===================== CLICK-TO-MOVE =====================
+function isSameCard(a, b) {
+    return a && b && a.type === b.type && a.col === b.col && a.cardIdx === b.cardIdx;
+}
+
+function handleCardClickSelect(info) {
+    if (!state.gameActive || state.gameWon) return;
+
+    // Nothing selected — select this card
+    if (!selectedCard) {
+        selectedCard = info;
+        renderGame();
+        return;
+    }
+
+    // Same card clicked — deselect
+    if (isSameCard(selectedCard, info)) {
+        selectedCard = null;
+        renderGame();
+        return;
+    }
+
+    // Foundation card clicked — try to move selected card there
+    if (info.type === 'foundation') {
+        const src = selectedCard;
+        selectedCard = null;
+        const moved = executeMove(src, 'foundation', info.col);
+        if (!moved) renderGame();
+        return;
+    }
+
+    // Tableau card clicked — try to move selected card to that column
+    const src = selectedCard;
+    selectedCard = null;
+    const moved = executeMove(src, 'tableau', info.col);
+    if (!moved) {
+        // Move failed — switch selection to the newly clicked card
+        selectedCard = info;
+        renderGame();
+    }
+}
+
+function handleDestinationClick(targetType, targetIdx) {
+    if (!selectedCard || !state.gameActive || state.gameWon) return;
+    const src = selectedCard;
+    selectedCard = null;
+    const moved = executeMove(src, targetType, targetIdx);
+    if (!moved) renderGame();
+}
+
+function applySelectedClass() {
+    if (!selectedCard) return;
+    if (selectedCard.type === 'waste') {
+        const el = document.querySelector('#waste .card');
+        if (el) el.classList.add('selected');
+    } else if (selectedCard.type === 'tableau') {
+        const colEl = document.getElementById(`tableau-${selectedCard.col}`);
+        if (colEl) {
+            const els = colEl.querySelectorAll('.card');
+            if (els[selectedCard.cardIdx]) els[selectedCard.cardIdx].classList.add('selected');
+        }
+    } else if (selectedCard.type === 'foundation') {
+        const el = document.querySelector(`#foundation-${selectedCard.col} .card`);
+        if (el) el.classList.add('selected');
+    }
+}
+
 // ===================== RENDER =====================
 function renderGame() {
-    renderStock(); renderWaste(); renderFoundations(); renderTableau(); updateMoveIndicator();
+    renderStock(); renderWaste(); renderFoundations(); renderTableau(); updateMoveIndicator(); applySelectedClass();
 }
 
 function renderStock() {
@@ -697,6 +788,7 @@ function renderWaste() {
         setTimeout(() => cardEl.classList.add('dragging'), 0);
     });
     cardEl.addEventListener('dragend', () => cardEl.classList.remove('dragging'));
+    cardEl.addEventListener('click', e => { e.stopPropagation(); handleCardClickSelect(wasteInfo); });
     cardEl.addEventListener('dblclick', () => autoMoveToFoundation('waste', -1));
     addTouchDrag(cardEl, wasteInfo);
     el.appendChild(cardEl);
@@ -717,9 +809,11 @@ function renderFoundations() {
                 setTimeout(() => cardEl.classList.add('dragging'), 0);
             });
             cardEl.addEventListener('dragend', () => cardEl.classList.remove('dragging'));
+            cardEl.addEventListener('click', e => { e.stopPropagation(); handleCardClickSelect(foundInfo); });
             addTouchDrag(cardEl, foundInfo);
             el.appendChild(cardEl);
         }
+        el.onclick = () => handleDestinationClick('foundation', i);
         el.ondragover = e => { e.preventDefault(); el.classList.add('drag-over'); };
         el.ondragleave = () => el.classList.remove('drag-over');
         el.ondrop = e => {
@@ -750,6 +844,7 @@ function renderTableauCol(col) {
             cardEl.addEventListener('dragend', () => {
                 Array.from(el.querySelectorAll('.dragging')).forEach(c => c.classList.remove('dragging'));
             });
+            cardEl.addEventListener('click', e => { e.stopPropagation(); handleCardClickSelect(tabInfo); });
             if (i === cards.length - 1)
                 cardEl.addEventListener('dblclick', () => autoMoveToFoundation('tableau', col));
             addTouchDrag(cardEl, tabInfo);
@@ -758,6 +853,7 @@ function renderTableauCol(col) {
         el.appendChild(cardEl);
     });
     el.style.minHeight = `${Math.max(y + m.h, m.h)}px`;
+    el.onclick = () => handleDestinationClick('tableau', col);
     el.ondragover = e => { e.preventDefault(); el.classList.add('drag-over'); };
     el.ondragleave = e => { if (!el.contains(e.relatedTarget)) el.classList.remove('drag-over'); };
     el.ondrop = e => {
@@ -782,7 +878,7 @@ function makeCard(card) {
 document.addEventListener('DOMContentLoaded', () => {
     initSupabase();
 
-    document.getElementById('stock').addEventListener('click', drawFromStock);
+    document.getElementById('stock').addEventListener('click', () => { selectedCard = null; drawFromStock(); });
     document.getElementById('stock').addEventListener('touchend', e => { e.preventDefault(); drawFromStock(); });
     document.getElementById('undo-btn').addEventListener('click', undoMove);
     document.getElementById('undo-btn').disabled = true;

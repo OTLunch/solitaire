@@ -214,6 +214,13 @@ button:active {
     cursor: grabbing;
 }
 
+.card.selected {
+    box-shadow: 0 0 0 3px #ffd700, 0 0 16px rgba(255, 215, 0, 0.55);
+    transform: translateY(-6px);
+    z-index: 40 !important;
+    cursor: pointer;
+}
+
 .card[draggable="true"] {
     cursor: grab;
 }
