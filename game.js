@@ -23,7 +23,7 @@ let dragInfo      = null;
 let history       = [];
 
 // ===================== TOUCH DRAG =====================
-const touch = { active: false, clone: null, sourceEl: null, offsetX: 0, offsetY: 0, moved: false };
+const touch = { active: false, clone: null, sourceEl: null, offsetX: 0, offsetY: 0, moved: false, startX: 0, startY: 0 };
 let lastTapTime = 0;
 let lastTapKey  = null;
 
@@ -45,6 +45,8 @@ function addTouchDrag(cardEl, info) {
         touch.clone = clone;
         touch.active = true;
         touch.moved = false;
+        touch.startX = t.clientX;
+        touch.startY = t.clientY;
         cardEl.style.opacity = '0.3';
     }, { passive: false });
 }
@@ -55,7 +57,9 @@ document.addEventListener('touchmove', e => {
     const t = e.touches[0];
     touch.clone.style.left = (t.clientX - touch.offsetX) + 'px';
     touch.clone.style.top  = (t.clientY - touch.offsetY) + 'px';
-    touch.moved = true;
+    const dx = Math.abs(t.clientX - touch.startX);
+    const dy = Math.abs(t.clientY - touch.startY);
+    if (dx > 8 || dy > 8) touch.moved = true;
 }, { passive: false });
 
 document.addEventListener('touchend', e => {
