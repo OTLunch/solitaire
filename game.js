@@ -24,6 +24,8 @@ let history       = [];
 
 // ===================== TOUCH DRAG =====================
 const touch = { active: false, clone: null, sourceEl: null, offsetX: 0, offsetY: 0, moved: false };
+let lastTapTime = 0;
+let lastTapKey  = null;
 
 function addTouchDrag(cardEl, info) {
     cardEl.addEventListener('touchstart', e => {
@@ -62,7 +64,42 @@ document.addEventListener('touchend', e => {
     const t = e.changedTouches[0];
     if (touch.clone) { touch.clone.remove(); touch.clone = null; }
     touch.active = false;
+
     if (!dragInfo) { renderGame(); return; }
+
+    // TAP (no movement) — handle double-tap detection here, avoid re-render
+    if (!touch.moved) {
+        // Build a key for this tap location
+        let tapKey = null;
+        if (dragInfo.type === 'waste') {
+            tapKey = 'waste';
+        } else if (dragInfo.type === 'tableau') {
+            const cards = state.tableau[dragInfo.col];
+            if (dragInfo.cardIdx === cards.length - 1) tapKey = `tab-${dragInfo.col}`;
+        }
+
+        const now = Date.now();
+        if (tapKey && tapKey === lastTapKey && now - lastTapTime < 300) {
+            // Double-tap confirmed — auto-move to foundation
+            lastTapTime = 0; lastTapKey = null;
+            const src = { ...dragInfo };
+            dragInfo = null;
+            if (touch.sourceEl) touch.sourceEl.style.opacity = '';
+            if (src.type === 'waste') autoMoveToFoundation('waste', -1);
+            else autoMoveToFoundation('tableau', src.col);
+            return;
+        }
+
+        // Single tap — restore card, store tap info, no re-render needed
+        lastTapTime = tapKey ? now : 0;
+        lastTapKey  = tapKey;
+        dragInfo = null;
+        if (touch.sourceEl) touch.sourceEl.style.opacity = '';
+        return;
+    }
+
+    // DRAG — find drop target
+    lastTapTime = 0; lastTapKey = null;
     const el = document.elementFromPoint(t.clientX, t.clientY);
     let node = el; let moved = false;
     while (node && node !== document.body) {
@@ -82,24 +119,8 @@ document.addEventListener('touchend', e => {
 
 document.addEventListener('touchcancel', () => {
     if (touch.clone) { touch.clone.remove(); touch.clone = null; }
-    touch.active = false; dragInfo = null; renderGame();
+    touch.active = false; dragInfo = null; lastTapTime = 0; lastTapKey = null; renderGame();
 });
-
-function addDoubleTap(el, callback) {
-    let lastTap = 0;
-    el.addEventListener('touchend', e => {
-        if (touch.moved) { lastTap = 0; return; }
-        const now = Date.now();
-        if (now - lastTap < 300) {
-            e.preventDefault();
-            dragInfo = null;
-            callback();
-            lastTap = 0;
-        } else {
-            lastTap = now;
-        }
-    });
-}
 
 // ===================== SUPABASE DB =====================
 function initSupabase() {
@@ -658,7 +679,6 @@ function renderWaste() {
     });
     cardEl.addEventListener('dragend', () => cardEl.classList.remove('dragging'));
     cardEl.addEventListener('dblclick', () => autoMoveToFoundation('waste', -1));
-    addDoubleTap(cardEl, () => autoMoveToFoundation('waste', -1));
     addTouchDrag(cardEl, wasteInfo);
     el.appendChild(cardEl);
 }
@@ -710,10 +730,8 @@ function renderTableauCol(col) {
             cardEl.addEventListener('dragend', () => {
                 Array.from(el.querySelectorAll('.dragging')).forEach(c => c.classList.remove('dragging'));
             });
-            if (i === cards.length - 1) {
+            if (i === cards.length - 1)
                 cardEl.addEventListener('dblclick', () => autoMoveToFoundation('tableau', col));
-                addDoubleTap(cardEl, () => autoMoveToFoundation('tableau', col));
-            }
             addTouchDrag(cardEl, tabInfo);
             y += 36;
         } else { y += 22; }
