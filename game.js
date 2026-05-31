@@ -233,16 +233,11 @@ function findFoundationFor(card) {
 
 // ===================== AVAILABLE MOVE CHECK =====================
 function hasAvailableMove() {
-    // Can still draw from stock
-    if (state.stock.length > 0) return true;
-
-    // Waste top card can go somewhere
+    // Check waste top card → foundation or tableau
     if (state.waste.length > 0) {
         const wc = state.waste[state.waste.length - 1];
         if (findFoundationFor(wc) !== -1) return true;
         for (let c = 0; c < 7; c++) { if (canMoveToTableau(wc, c)) return true; }
-        // Waste can be recycled to stock — still a "move" available
-        return true;
     }
 
     // Check all tableau columns
