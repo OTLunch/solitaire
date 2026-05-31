@@ -413,7 +413,7 @@ function updateMoveIndicator() {
         el.textContent = '✓ Moves available — click to highlight';
         el.className = 'moves-ok';
     } else {
-        el.textContent = '✗ No moves available — try a new game';
+        el.textContent = '✗ No moves available';
         el.className = 'moves-none';
     }
 }
