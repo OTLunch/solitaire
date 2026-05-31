@@ -269,6 +269,10 @@ button:active {
     z-index: 200;
 }
 
+.hidden {
+    display: none;
+}
+
 .modal.hidden {
     display: none;
 }

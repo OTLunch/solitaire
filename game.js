@@ -233,28 +233,29 @@ function findFoundationFor(card) {
 
 // ===================== AVAILABLE MOVE CHECK =====================
 function hasAvailableMove() {
-    // Check waste top card → foundation or tableau
+    // Build list of every moveable card and which column it came from (-1 = waste)
+    const sources = [];
+
     if (state.waste.length > 0) {
-        const wc = state.waste[state.waste.length - 1];
-        if (findFoundationFor(wc) !== -1) return true;
-        for (let c = 0; c < 7; c++) { if (canMoveToTableau(wc, c)) return true; }
+        sources.push({ card: state.waste[state.waste.length - 1], fromCol: -1 });
     }
 
-    // Check all tableau columns
     for (let col = 0; col < 7; col++) {
         const cards = state.tableau[col];
-        if (cards.length === 0) continue;
-        const firstUp = cards.findIndex(c => c.faceUp);
-        if (firstUp === -1) continue;
-        // Top card → foundation?
-        if (findFoundationFor(cards[cards.length - 1]) !== -1) return true;
-        // Any face-up sequence → another column?
-        for (let i = firstUp; i < cards.length; i++) {
-            for (let c = 0; c < 7; c++) {
-                if (c !== col && canMoveToTableau(cards[i], c)) return true;
-            }
+        for (let i = 0; i < cards.length; i++) {
+            if (cards[i].faceUp) sources.push({ card: cards[i], fromCol: col });
         }
     }
+
+    for (const { card, fromCol } of sources) {
+        // Can it go to a foundation?
+        if (findFoundationFor(card) !== -1) return true;
+        // Can it go to any tableau column other than its own?
+        for (let col = 0; col < 7; col++) {
+            if (col !== fromCol && canMoveToTableau(card, col)) return true;
+        }
+    }
+
     return false;
 }
 
