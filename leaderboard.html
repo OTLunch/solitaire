@@ -98,8 +98,10 @@
         </table>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
     <script>
-        const STORAGE_KEY = 'solitaire_stats_v1';
+        const SUPABASE_URL = 'https://bdfflithcyzwbtuhtwsn.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_AJJXYJV2yvSGIkq5WBqL6A_XkYGk4pB';
 
         function formatTime(s) {
             if (s === null) return '--:--';
@@ -108,25 +110,24 @@
             return m + ':' + sec.toString().padStart(2, '0');
         }
 
-        function buildLeaderboard() {
-            let all = {};
-            try { all = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (e) {}
+        async function buildLeaderboard() {
+            const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+            const { data, error } = await db.from('players').select('*');
 
-            const players = Object.entries(all).map(([name, s]) => ({
-                name,
-                played:   s.played || 0,
-                wins:     s.wins || 0,
-                losses:   (s.played || 0) - (s.wins || 0),
-                rate:     s.played > 0 ? (s.wins / s.played) : 0,
-                bestTime: s.bestTime || null
-            }));
-
-            if (players.length === 0) {
+            if (error || !data || data.length === 0) {
                 document.getElementById('no-players').classList.remove('hidden');
                 return;
             }
 
-            // Sort by win rate desc, then by total wins desc
+            const players = data.map(p => ({
+                name:     p.name,
+                played:   p.played || 0,
+                wins:     p.wins || 0,
+                losses:   (p.played || 0) - (p.wins || 0),
+                rate:     p.played > 0 ? (p.wins / p.played) : 0,
+                bestTime: p.best_time || null
+            }));
+
             players.sort((a, b) => b.rate - a.rate || b.wins - a.wins);
 
             const medals = ['🥇','🥈','🥉'];

@@ -4,26 +4,25 @@ const SYMBOLS = { spades: '♠', hearts: '♥', diamonds: '♦', clubs: '♣' };
 const VALUES = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
 const NUM_VAL = {A:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,J:11,Q:12,K:13};
 const RED_SUITS = new Set(['hearts','diamonds']);
-const STORAGE_KEY = 'solitaire_stats_v1';
-const SAVE_KEY    = 'solitaire_saved_game';
+const SAVE_KEY  = 'solitaire_saved_game';
+
+const SUPABASE_URL = 'https://bdfflithcyzwbtuhtwsn.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_AJJXYJV2yvSGIkq5WBqL6A_XkYGk4pB';
+let db;
 
 // ===================== STATE =====================
 let state = {
-    stock: [],
-    waste: [],
-    foundations: [[],[],[],[]],
+    stock: [], waste: [], foundations: [[],[],[],[]],
     tableau: [[],[],[],[],[],[],[]],
-    seconds: 0,
-    timerInterval: null,
-    gameActive: false,
-    gameWon: false
+    seconds: 0, timerInterval: null, gameActive: false, gameWon: false
 };
 
 let currentPlayer = null;
-let dragInfo = null;
-let history = [];  // undo stack
+let playerCache   = null;   // { name, played, wins, best_time }
+let dragInfo      = null;
+let history       = [];
 
-// ===================== TOUCH DRAG SUPPORT =====================
+// ===================== TOUCH DRAG =====================
 const touch = { active: false, clone: null, sourceEl: null, offsetX: 0, offsetY: 0 };
 
 function addTouchDrag(cardEl, info) {
@@ -31,12 +30,10 @@ function addTouchDrag(cardEl, info) {
         e.preventDefault();
         const t = e.touches[0];
         const rect = cardEl.getBoundingClientRect();
-
         dragInfo = info;
         touch.sourceEl = cardEl;
         touch.offsetX = t.clientX - rect.left;
         touch.offsetY = t.clientY - rect.top;
-
         const clone = cardEl.cloneNode(true);
         clone.style.cssText = `position:fixed;width:${rect.width}px;height:${rect.height}px;` +
             `left:${rect.left}px;top:${rect.top}px;opacity:0.85;z-index:9999;` +
@@ -61,17 +58,11 @@ document.addEventListener('touchend', e => {
     if (!touch.active) return;
     e.preventDefault();
     const t = e.changedTouches[0];
-
     if (touch.clone) { touch.clone.remove(); touch.clone = null; }
     touch.active = false;
-
     if (!dragInfo) { renderGame(); return; }
-
-    // Find drop target underneath finger
     const el = document.elementFromPoint(t.clientX, t.clientY);
-    let node = el;
-    let moved = false;
-
+    let node = el; let moved = false;
     while (node && node !== document.body) {
         if (node.id && node.id.startsWith('foundation-')) {
             const idx = parseInt(node.dataset.index);
@@ -83,86 +74,71 @@ document.addEventListener('touchend', e => {
         }
         node = node.parentElement;
     }
-
     dragInfo = null;
     if (!moved) renderGame();
 }, { passive: false });
 
 document.addEventListener('touchcancel', () => {
     if (touch.clone) { touch.clone.remove(); touch.clone = null; }
-    touch.active = false;
-    dragInfo = null;
-    renderGame();
+    touch.active = false; dragInfo = null; renderGame();
 });
 
-// ===================== HISTORY / UNDO =====================
-function saveToHistory() {
-    history.push({
-        stock:       JSON.parse(JSON.stringify(state.stock)),
-        waste:       JSON.parse(JSON.stringify(state.waste)),
-        foundations: JSON.parse(JSON.stringify(state.foundations)),
-        tableau:     JSON.parse(JSON.stringify(state.tableau)),
-        seconds:     state.seconds
-    });
-    if (history.length > 100) history.shift();
-    document.getElementById('undo-btn').disabled = false;
+// ===================== SUPABASE DB =====================
+function initSupabase() {
+    db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 }
 
-function undoMove() {
-    if (history.length === 0) return;
-    const prev = history.pop();
-    state.stock       = prev.stock;
-    state.waste       = prev.waste;
-    state.foundations = prev.foundations;
-    state.tableau     = prev.tableau;
-    state.seconds     = prev.seconds;
-    document.getElementById('timer').textContent = formatTime(state.seconds);
-    document.getElementById('undo-btn').disabled = history.length === 0;
-    renderGame();
+async function dbLoadAllPlayers() {
+    try {
+        const { data, error } = await db.from('players').select('*');
+        if (error) throw error;
+        return data || [];
+    } catch (e) { console.error('DB load error:', e); return []; }
+}
+
+async function dbGetPlayer(name) {
+    try {
+        const { data, error } = await db.from('players').select('*')
+            .ilike('name', name).limit(1);
+        if (error || !data || data.length === 0) return null;
+        return data[0];
+    } catch (e) { return null; }
+}
+
+async function dbSavePlayer(player) {
+    try {
+        const { error } = await db.from('players')
+            .upsert(player, { onConflict: 'name' });
+        if (error) throw error;
+    } catch (e) { console.error('DB save error:', e); }
 }
 
 // ===================== STATS =====================
-function loadAllStats() {
-    try {
-        return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    } catch (e) {
-        return {};
-    }
-}
-
-function getPlayerStats(name) {
-    return loadAllStats()[name] || { played: 0, wins: 0, bestTime: null };
-}
-
-function savePlayerStats(name, stats) {
-    const all = loadAllStats();
-    all[name] = stats;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(all)); } catch (e) {}
-}
-
-function recordWin(seconds) {
-    const stats = getPlayerStats(currentPlayer);
-    stats.played++;
-    stats.wins++;
-    if (stats.bestTime === null || seconds < stats.bestTime) stats.bestTime = seconds;
-    savePlayerStats(currentPlayer, stats);
+async function recordWin(seconds) {
+    if (!currentPlayer) return;
+    if (!playerCache) playerCache = { name: currentPlayer, played: 0, wins: 0, best_time: null };
+    playerCache.played++;
+    playerCache.wins++;
+    if (playerCache.best_time === null || seconds < playerCache.best_time)
+        playerCache.best_time = seconds;
+    await dbSavePlayer(playerCache);
     updateStatsDisplay();
 }
 
-function recordAbandoned() {
+async function recordAbandoned() {
     if (!currentPlayer || !state.gameActive || state.gameWon) return;
-    const stats = getPlayerStats(currentPlayer);
-    stats.played++;
-    savePlayerStats(currentPlayer, stats);
+    if (!playerCache) playerCache = { name: currentPlayer, played: 0, wins: 0, best_time: null };
+    playerCache.played++;
+    await dbSavePlayer(playerCache);
     updateStatsDisplay();
 }
 
 function updateStatsDisplay() {
-    if (!currentPlayer) return;
-    const s = getPlayerStats(currentPlayer);
+    if (!currentPlayer || !playerCache) return;
+    const s = playerCache;
     const losses = s.played - s.wins;
-    const rate = s.played > 0 ? Math.round((s.wins / s.played) * 100) : 0;
-    const best = s.bestTime !== null ? formatTime(s.bestTime) : '--:--';
+    const rate   = s.played > 0 ? Math.round((s.wins / s.played) * 100) : 0;
+    const best   = s.best_time !== null ? formatTime(s.best_time) : '--:--';
     document.getElementById('player-name-display').textContent = currentPlayer;
     document.getElementById('stat-played').textContent  = s.played;
     document.getElementById('stat-wins').textContent    = s.wins;
@@ -176,12 +152,8 @@ function saveGameState() {
     if (!currentPlayer || !state.gameActive || state.gameWon) return;
     try {
         localStorage.setItem(SAVE_KEY, JSON.stringify({
-            player:      currentPlayer,
-            stock:       state.stock,
-            waste:       state.waste,
-            foundations: state.foundations,
-            tableau:     state.tableau,
-            seconds:     state.seconds
+            player: currentPlayer, stock: state.stock, waste: state.waste,
+            foundations: state.foundations, tableau: state.tableau, seconds: state.seconds
         }));
     } catch (e) {}
 }
@@ -203,21 +175,14 @@ function restoreGameState(saved) {
     history = [];
     document.getElementById('undo-btn').disabled = true;
     document.getElementById('win-modal').classList.add('hidden');
-
-    state.stock       = saved.stock;
-    state.waste       = saved.waste;
-    state.foundations = saved.foundations;
-    state.tableau     = saved.tableau;
-    state.seconds     = saved.seconds;
-    state.gameActive  = true;
-    state.gameWon     = false;
-
+    state.stock = saved.stock; state.waste = saved.waste;
+    state.foundations = saved.foundations; state.tableau = saved.tableau;
+    state.seconds = saved.seconds; state.gameActive = true; state.gameWon = false;
     document.getElementById('timer').textContent = formatTime(state.seconds);
     state.timerInterval = setInterval(() => {
         state.seconds++;
         document.getElementById('timer').textContent = formatTime(state.seconds);
     }, 1000);
-
     renderGame();
 }
 
@@ -243,30 +208,35 @@ function formatTime(s) {
 }
 
 // ===================== PLAYER MANAGEMENT =====================
-function showPlayerModal() {
+async function showPlayerModal() {
     stopTimer();
-    const modal = document.getElementById('player-modal');
-    modal.classList.remove('hidden');
+    document.getElementById('player-modal').classList.remove('hidden');
     document.getElementById('player-name-input').value = '';
+    document.getElementById('name-error').textContent = '';
 
-    const all = loadAllStats();
-    const names = Object.keys(all);
     const container = document.getElementById('existing-players');
-    container.innerHTML = '';
+    container.innerHTML = '<p class="existing-label">Loading players…</p>';
 
-    if (names.length > 0) {
+    const players = await dbLoadAllPlayers();
+    players.sort((a, b) => {
+        const ra = a.played > 0 ? a.wins / a.played : 0;
+        const rb = b.played > 0 ? b.wins / b.played : 0;
+        return rb - ra;
+    });
+
+    container.innerHTML = '';
+    if (players.length > 0) {
         const label = document.createElement('p');
         label.className = 'existing-label';
         label.textContent = 'Select player';
         container.appendChild(label);
 
-        names.forEach(name => {
+        players.forEach(p => {
             const btn = document.createElement('button');
             btn.className = 'player-select-btn';
-            const s = all[name];
-            const rate = s.played > 0 ? Math.round((s.wins / s.played) * 100) : 0;
-            btn.textContent = `${name}  —  ${s.wins}W / ${s.played - s.wins}L  (${rate}%)`;
-            btn.onclick = () => selectPlayer(name);
+            const rate = p.played > 0 ? Math.round((p.wins / p.played) * 100) : 0;
+            btn.textContent = `${p.name}  —  ${p.wins}W / ${p.played - p.wins}L  (${rate}%)`;
+            btn.onclick = () => selectPlayer(p.name);
             container.appendChild(btn);
         });
 
@@ -277,28 +247,27 @@ function showPlayerModal() {
     }
 }
 
-function tryCreatePlayer() {
+async function tryCreatePlayer() {
     const name = document.getElementById('player-name-input').value.trim();
     if (!name) return;
-    const existing = Object.keys(loadAllStats());
-    if (existing.some(n => n.toLowerCase() === name.toLowerCase())) {
-        document.getElementById('name-error').textContent = `"${name}" is already taken — select it above or choose a different name.`;
+    const existing = await dbGetPlayer(name);
+    if (existing) {
+        document.getElementById('name-error').textContent =
+            `"${name}" is already taken — select it above or choose a different name.`;
         return;
     }
+    await dbSavePlayer({ name, played: 0, wins: 0, best_time: null });
     document.getElementById('name-error').textContent = '';
     selectPlayer(name);
 }
 
-function selectPlayer(name) {
+async function selectPlayer(name) {
     currentPlayer = name;
     document.getElementById('player-modal').classList.add('hidden');
+    playerCache = await dbGetPlayer(name) || { name, played: 0, wins: 0, best_time: null };
     updateStatsDisplay();
     const saved = loadSavedGame(name);
-    if (saved) {
-        restoreGameState(saved);
-    } else {
-        startNewGame(false);
-    }
+    if (saved) { restoreGameState(saved); } else { startNewGame(false); }
 }
 
 // ===================== DECK =====================
@@ -320,9 +289,8 @@ function isRed(card) { return RED_SUITS.has(card.suit); }
 function numVal(card) { return NUM_VAL[card.value]; }
 
 // ===================== GAME SETUP =====================
-function startNewGame(countAbandoned = true) {
-    if (countAbandoned && state.gameActive && !state.gameWon) recordAbandoned();
-
+async function startNewGame(countAbandoned = true) {
+    if (countAbandoned && state.gameActive && !state.gameWon) await recordAbandoned();
     stopTimer();
     clearSavedGame();
     history = [];
@@ -330,24 +298,43 @@ function startNewGame(countAbandoned = true) {
     document.getElementById('win-modal').classList.add('hidden');
 
     const deck = shuffle(createDeck());
-    state.stock = [];
-    state.waste = [];
-    state.foundations = [[],[],[],[]];
-    state.tableau     = [[],[],[],[],[],[],[]];
-    state.gameWon = false;
-    state.gameActive = true;
+    state.stock = []; state.waste = []; state.foundations = [[],[],[],[]];
+    state.tableau = [[],[],[],[],[],[],[]];
+    state.gameWon = false; state.gameActive = true;
 
     let idx = 0;
-    for (let col = 0; col < 7; col++) {
+    for (let col = 0; col < 7; col++)
         for (let row = 0; row <= col; row++) {
             const card = { ...deck[idx++] };
             card.faceUp = (row === col);
             state.tableau[col].push(card);
         }
-    }
     while (idx < deck.length) state.stock.push({ ...deck[idx++], faceUp: false });
-
     startTimer();
+    renderGame();
+}
+
+// ===================== UNDO =====================
+function saveToHistory() {
+    history.push({
+        stock:       JSON.parse(JSON.stringify(state.stock)),
+        waste:       JSON.parse(JSON.stringify(state.waste)),
+        foundations: JSON.parse(JSON.stringify(state.foundations)),
+        tableau:     JSON.parse(JSON.stringify(state.tableau)),
+        seconds:     state.seconds
+    });
+    if (history.length > 100) history.shift();
+    document.getElementById('undo-btn').disabled = false;
+}
+
+function undoMove() {
+    if (history.length === 0) return;
+    const prev = history.pop();
+    state.stock = prev.stock; state.waste = prev.waste;
+    state.foundations = prev.foundations; state.tableau = prev.tableau;
+    state.seconds = prev.seconds;
+    document.getElementById('timer').textContent = formatTime(state.seconds);
+    document.getElementById('undo-btn').disabled = history.length === 0;
     renderGame();
 }
 
@@ -373,48 +360,26 @@ function findFoundationFor(card) {
 }
 
 // ===================== AVAILABLE MOVE CHECK =====================
-function isProgressMove(card, fromCol, toCol) {
-    // Moving to foundation always advances the game
-    if (toCol === 'foundation') return findFoundationFor(card) !== -1;
-    // Waste card placed anywhere is progress (uses a drawn card)
-    if (fromCol === -1) return canMoveToTableau(card, toCol);
-    // Tableau-to-tableau only counts if it reveals a face-down card below
-    const cards = state.tableau[fromCol];
-    const cardIdx = cards.indexOf(card);
-    const revealsHidden = cardIdx > 0 && !cards[cardIdx - 1].faceUp;
-    return revealsHidden && canMoveToTableau(card, toCol);
-}
-
 function hasAvailableMove() {
-    // Foundation moves: any face-up top tableau card or waste top card
     if (state.waste.length > 0 && findFoundationFor(state.waste[state.waste.length - 1]) !== -1) return true;
     for (let col = 0; col < 7; col++) {
         const cards = state.tableau[col];
         if (cards.length > 0 && cards[cards.length - 1].faceUp &&
             findFoundationFor(cards[cards.length - 1]) !== -1) return true;
     }
-
-    // Waste-to-tableau moves
     if (state.waste.length > 0) {
         const wc = state.waste[state.waste.length - 1];
-        for (let col = 0; col < 7; col++) {
-            if (canMoveToTableau(wc, col)) return true;
-        }
+        for (let col = 0; col < 7; col++) if (canMoveToTableau(wc, col)) return true;
     }
-
-    // Tableau-to-tableau moves that reveal a face-down card
     for (let col = 0; col < 7; col++) {
         const cards = state.tableau[col];
         for (let i = 0; i < cards.length; i++) {
             if (!cards[i].faceUp) continue;
-            const revealsHidden = i > 0 && !cards[i - 1].faceUp;
-            if (!revealsHidden) continue;
-            for (let tc = 0; tc < 7; tc++) {
-                if (tc !== col && canMoveToTableau(cards[i], tc)) return true;
-            }
+            if (i > 0 && !cards[i - 1].faceUp)
+                for (let tc = 0; tc < 7; tc++)
+                    if (tc !== col && canMoveToTableau(cards[i], tc)) return true;
         }
     }
-
     return false;
 }
 
@@ -432,8 +397,6 @@ function updateMoveIndicator() {
 
 function flashAvailableMove() {
     if (!state.gameActive) return;
-
-    // Foundation moves first
     if (state.waste.length > 0 && findFoundationFor(state.waste[state.waste.length - 1]) !== -1) {
         flashElement(document.querySelector('#waste .card')); return;
     }
@@ -441,34 +404,24 @@ function flashAvailableMove() {
         const cards = state.tableau[col];
         if (cards.length > 0 && cards[cards.length - 1].faceUp &&
             findFoundationFor(cards[cards.length - 1]) !== -1) {
-            const colEl = document.getElementById(`tableau-${col}`);
-            flashElement(colEl.querySelectorAll('.card')[cards.length - 1]); return;
+            flashElement(document.getElementById(`tableau-${col}`).querySelectorAll('.card')[cards.length - 1]); return;
         }
     }
-
-    // Waste-to-tableau
     if (state.waste.length > 0) {
         const wc = state.waste[state.waste.length - 1];
         for (let col = 0; col < 7; col++) {
-            if (canMoveToTableau(wc, col)) {
-                flashElement(document.querySelector('#waste .card')); return;
-            }
+            if (canMoveToTableau(wc, col)) { flashElement(document.querySelector('#waste .card')); return; }
         }
     }
-
-    // Tableau-to-tableau revealing a face-down card
     for (let col = 0; col < 7; col++) {
         const cards = state.tableau[col];
         for (let i = 0; i < cards.length; i++) {
             if (!cards[i].faceUp) continue;
-            const revealsHidden = i > 0 && !cards[i - 1].faceUp;
-            if (!revealsHidden) continue;
-            for (let tc = 0; tc < 7; tc++) {
-                if (tc !== col && canMoveToTableau(cards[i], tc)) {
-                    const colEl = document.getElementById(`tableau-${col}`);
-                    flashElement(colEl.querySelectorAll('.card')[i]); return;
-                }
-            }
+            if (i > 0 && !cards[i - 1].faceUp)
+                for (let tc = 0; tc < 7; tc++)
+                    if (tc !== col && canMoveToTableau(cards[i], tc)) {
+                        flashElement(document.getElementById(`tableau-${col}`).querySelectorAll('.card')[i]); return;
+                    }
         }
     }
 }
@@ -476,7 +429,7 @@ function flashAvailableMove() {
 function flashElement(el) {
     if (!el) return;
     el.classList.remove('flash');
-    void el.offsetWidth; // force reflow so re-adding the class restarts animation
+    void el.offsetWidth;
     el.classList.add('flash');
     el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
 }
@@ -497,7 +450,7 @@ function drawFromStock() {
     renderGame();
 }
 
-function autoMoveToFoundation(sourceType, sourceCol) {
+async function autoMoveToFoundation(sourceType, sourceCol) {
     let card;
     if (sourceType === 'waste') {
         if (state.waste.length === 0) return false;
@@ -508,28 +461,19 @@ function autoMoveToFoundation(sourceType, sourceCol) {
         card = col[col.length - 1];
         if (!card.faceUp) return false;
     }
-
     const fi = findFoundationFor(card);
     if (fi === -1) return false;
-
     saveToHistory();
-
-    if (sourceType === 'waste') {
-        state.waste.pop();
-    } else {
-        state.tableau[sourceCol].pop();
-        flipTopCard(sourceCol);
-    }
-
+    if (sourceType === 'waste') { state.waste.pop(); }
+    else { state.tableau[sourceCol].pop(); flipTopCard(sourceCol); }
     state.foundations[fi].push(card);
     renderGame();
-    checkWin();
+    await checkWin();
     return true;
 }
 
 function executeMove(src, targetType, targetIdx) {
     let cards;
-
     if (src.type === 'waste') {
         if (state.waste.length === 0) return false;
         cards = [state.waste[state.waste.length - 1]];
@@ -542,31 +486,18 @@ function executeMove(src, targetType, targetIdx) {
         if (src.cardIdx >= col.length) return false;
         cards = col.slice(src.cardIdx);
     }
-
     if (targetType === 'foundation') {
         if (cards.length !== 1) return false;
         if (!canMoveToFoundation(cards[0], targetIdx)) return false;
     } else {
         if (!canMoveToTableau(cards[0], targetIdx)) return false;
     }
-
     saveToHistory();
-
-    if (src.type === 'waste') {
-        state.waste.pop();
-    } else if (src.type === 'foundation') {
-        state.foundations[src.col].pop();
-    } else {
-        state.tableau[src.col].splice(src.cardIdx);
-        flipTopCard(src.col);
-    }
-
-    if (targetType === 'foundation') {
-        state.foundations[targetIdx].push(cards[0]);
-    } else {
-        cards.forEach(c => state.tableau[targetIdx].push(c));
-    }
-
+    if (src.type === 'waste') { state.waste.pop(); }
+    else if (src.type === 'foundation') { state.foundations[src.col].pop(); }
+    else { state.tableau[src.col].splice(src.cardIdx); flipTopCard(src.col); }
+    if (targetType === 'foundation') { state.foundations[targetIdx].push(cards[0]); }
+    else { cards.forEach(c => state.tableau[targetIdx].push(c)); }
     renderGame();
     checkWin();
     return true;
@@ -577,67 +508,49 @@ function flipTopCard(col) {
     if (c.length > 0 && !c[c.length - 1].faceUp) c[c.length - 1].faceUp = true;
 }
 
-function checkWin() {
+async function checkWin() {
     const total = state.foundations.reduce((sum, f) => sum + f.length, 0);
     if (total !== 52) return;
-
-    state.gameWon = true;
-    state.gameActive = false;
+    state.gameWon = true; state.gameActive = false;
     stopTimer();
-
     clearSavedGame();
-    const prevBest = getPlayerStats(currentPlayer).bestTime;
+    const prevBest = playerCache ? playerCache.best_time : null;
     const isNewBest = prevBest === null || state.seconds < prevBest;
-    recordWin(state.seconds);
-
+    await recordWin(state.seconds);
     setTimeout(() => {
-        const stats = getPlayerStats(currentPlayer);
         document.getElementById('win-time-display').textContent = `Time: ${formatTime(state.seconds)}`;
         document.getElementById('win-best-display').textContent = isNewBest
             ? 'New personal best! 🎉'
-            : `Your best: ${formatTime(stats.bestTime)}`;
+            : `Your best: ${formatTime(playerCache.best_time)}`;
         document.getElementById('win-modal').classList.remove('hidden');
     }, 400);
 }
 
 // ===================== RENDER =====================
 function renderGame() {
-    renderStock();
-    renderWaste();
-    renderFoundations();
-    renderTableau();
-    updateMoveIndicator();
+    renderStock(); renderWaste(); renderFoundations(); renderTableau(); updateMoveIndicator();
 }
 
 function renderStock() {
     const el = document.getElementById('stock');
-    el.innerHTML = '';
-    el.className = 'pile';
+    el.innerHTML = ''; el.className = 'pile';
     if (state.stock.length > 0) {
         const back = document.createElement('div');
-        back.className = 'card face-down';
-        back.style.position = 'relative';
-        el.appendChild(back);
-        el.classList.add('has-cards');
-    } else if (state.waste.length > 0) {
-        el.classList.add('empty-restockable');
-    }
+        back.className = 'card face-down'; back.style.position = 'relative';
+        el.appendChild(back); el.classList.add('has-cards');
+    } else if (state.waste.length > 0) { el.classList.add('empty-restockable'); }
 }
 
 function renderWaste() {
     const el = document.getElementById('waste');
     el.innerHTML = '';
     if (state.waste.length === 0) return;
-
     const card = state.waste[state.waste.length - 1];
     const cardEl = makeCard(card);
-    cardEl.style.position = 'relative';
-    cardEl.draggable = true;
-
+    cardEl.style.position = 'relative'; cardEl.draggable = true;
     const wasteInfo = { type: 'waste', col: -1, cardIdx: 0 };
     cardEl.addEventListener('dragstart', e => {
-        dragInfo = wasteInfo;
-        e.dataTransfer.effectAllowed = 'move';
+        dragInfo = wasteInfo; e.dataTransfer.effectAllowed = 'move';
         setTimeout(() => cardEl.classList.add('dragging'), 0);
     });
     cardEl.addEventListener('dragend', () => cardEl.classList.remove('dragging'));
@@ -650,131 +563,102 @@ function renderFoundations() {
     for (let i = 0; i < 4; i++) {
         const el = document.getElementById(`foundation-${i}`);
         el.innerHTML = '';
-
         const f = state.foundations[i];
         if (f.length > 0) {
             const card = f[f.length - 1];
             const cardEl = makeCard(card);
-            cardEl.style.position = 'relative';
+            cardEl.style.position = 'relative'; cardEl.draggable = true;
             const foundInfo = { type: 'foundation', col: i, cardIdx: f.length - 1 };
-            cardEl.draggable = true;
             cardEl.addEventListener('dragstart', e => {
-                dragInfo = foundInfo;
-                e.dataTransfer.effectAllowed = 'move';
+                dragInfo = foundInfo; e.dataTransfer.effectAllowed = 'move';
                 setTimeout(() => cardEl.classList.add('dragging'), 0);
             });
             cardEl.addEventListener('dragend', () => cardEl.classList.remove('dragging'));
             addTouchDrag(cardEl, foundInfo);
             el.appendChild(cardEl);
         }
-
         el.ondragover = e => { e.preventDefault(); el.classList.add('drag-over'); };
         el.ondragleave = () => el.classList.remove('drag-over');
         el.ondrop = e => {
-            e.preventDefault();
-            el.classList.remove('drag-over');
-            if (!dragInfo) return;
-            executeMove(dragInfo, 'foundation', i);
-            dragInfo = null;
+            e.preventDefault(); el.classList.remove('drag-over');
+            if (!dragInfo) return; executeMove(dragInfo, 'foundation', i); dragInfo = null;
         };
     }
 }
 
-function renderTableau() {
-    for (let col = 0; col < 7; col++) renderTableauCol(col);
-}
+function renderTableau() { for (let col = 0; col < 7; col++) renderTableauCol(col); }
 
 function renderTableauCol(col) {
     const el = document.getElementById(`tableau-${col}`);
     el.innerHTML = '';
-
     const cards = state.tableau[col];
     let y = 0;
-
     cards.forEach((card, i) => {
         const cardEl = makeCard(card);
-        cardEl.style.top  = `${y}px`;
-        cardEl.style.left = '0';
-
+        cardEl.style.top = `${y}px`; cardEl.style.left = '0';
         if (card.faceUp) {
             const tabInfo = { type: 'tableau', col, cardIdx: i };
             cardEl.draggable = true;
-
             cardEl.addEventListener('dragstart', e => {
-                dragInfo = tabInfo;
-                e.dataTransfer.effectAllowed = 'move';
-                setTimeout(() => {
-                    for (let j = i; j < el.children.length; j++) el.children[j].classList.add('dragging');
-                }, 0);
+                dragInfo = tabInfo; e.dataTransfer.effectAllowed = 'move';
+                setTimeout(() => { for (let j = i; j < el.children.length; j++) el.children[j].classList.add('dragging'); }, 0);
             });
-
             cardEl.addEventListener('dragend', () => {
                 Array.from(el.querySelectorAll('.dragging')).forEach(c => c.classList.remove('dragging'));
             });
-
-            if (i === cards.length - 1) {
+            if (i === cards.length - 1)
                 cardEl.addEventListener('dblclick', () => autoMoveToFoundation('tableau', col));
-            }
-
             addTouchDrag(cardEl, tabInfo);
             y += 36;
-        } else {
-            y += 22;
-        }
-
+        } else { y += 22; }
         el.appendChild(cardEl);
     });
-
     el.style.minHeight = `${Math.max(y + 116, 116)}px`;
-
     el.ondragover = e => { e.preventDefault(); el.classList.add('drag-over'); };
     el.ondragleave = e => { if (!el.contains(e.relatedTarget)) el.classList.remove('drag-over'); };
     el.ondrop = e => {
-        e.preventDefault();
-        el.classList.remove('drag-over');
-        if (!dragInfo) return;
-        executeMove(dragInfo, 'tableau', col);
-        dragInfo = null;
+        e.preventDefault(); el.classList.remove('drag-over');
+        if (!dragInfo) return; executeMove(dragInfo, 'tableau', col); dragInfo = null;
     };
 }
 
 function makeCard(card) {
     const el = document.createElement('div');
     if (!card.faceUp) { el.className = 'card face-down'; return el; }
-
     el.className = `card ${isRed(card) ? 'red' : 'black'}`;
     const sym = SYMBOLS[card.suit];
     el.innerHTML = `
         <span class="corner corner-tl">${card.value}<span class="corner-suit">${sym}</span></span>
         <span class="card-center-suit">${sym}</span>
-        <span class="corner corner-br">${card.value}<span class="corner-suit">${sym}</span></span>
-    `;
+        <span class="corner corner-br">${card.value}<span class="corner-suit">${sym}</span></span>`;
     return el;
 }
 
 // ===================== EVENT LISTENERS =====================
 document.addEventListener('DOMContentLoaded', () => {
+    initSupabase();
+
     document.getElementById('stock').addEventListener('click', drawFromStock);
     document.getElementById('stock').addEventListener('touchend', e => { e.preventDefault(); drawFromStock(); });
-    document.getElementById('move-indicator').addEventListener('click', flashAvailableMove);
     document.getElementById('undo-btn').addEventListener('click', undoMove);
     document.getElementById('undo-btn').disabled = true;
-    document.getElementById('new-game-btn').addEventListener('click', () => startNewGame(true));
-    document.getElementById('change-player-btn').addEventListener('click', () => {
-        recordAbandoned();
+    document.getElementById('move-indicator').addEventListener('click', flashAvailableMove);
+
+    document.getElementById('new-game-btn').addEventListener('click', async () => {
+        await startNewGame(true);
+    });
+    document.getElementById('change-player-btn').addEventListener('click', async () => {
+        await recordAbandoned();
         state.gameActive = false;
         showPlayerModal();
     });
     document.getElementById('play-again-btn').addEventListener('click', () => startNewGame(false));
-    document.getElementById('start-btn').addEventListener('click', () => {
-        tryCreatePlayer();
-    });
+    document.getElementById('start-btn').addEventListener('click', tryCreatePlayer);
     document.getElementById('player-name-input').addEventListener('keydown', e => {
         if (e.key === 'Enter') tryCreatePlayer();
         else document.getElementById('name-error').textContent = '';
     });
 
     window.addEventListener('beforeunload', saveGameState);
-
     showPlayerModal();
 });

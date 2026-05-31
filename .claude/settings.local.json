@@ -3,7 +3,10 @@
     "allow": [
       "Bash(winget install *)",
       "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" auth login --hostname github.com --git-protocol https --web)",
-      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" repo create solitaire --public --source \"c:\\\\Users\\\\larry\\\\Desktop\\\\Claude Projects\\\\Solitaire\" --remote origin --push)"
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" repo create solitaire --public --source \"c:\\\\Users\\\\larry\\\\Desktop\\\\Claude Projects\\\\Solitaire\" --remote origin --push)",
+      "Bash(ipconfig)",
+      "PowerShell(New-NetFirewallRule -DisplayName \"Solitaire Dev Server\" -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow -ErrorAction SilentlyContinue)",
+      "PowerShell(& \"C:\\\\Program Files\\\\nodejs\\\\npm.cmd\" install -g netlify-cli 2>&1)"
     ]
   }
 }
