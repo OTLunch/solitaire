@@ -504,7 +504,7 @@ async function autoComplete() {
         if (!moved) break;
 
         renderGame();
-        await delay(80);
+        await delay(150);
     }
 
     autoCompleting = false;
