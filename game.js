@@ -277,6 +277,18 @@ function showPlayerModal() {
     }
 }
 
+function tryCreatePlayer() {
+    const name = document.getElementById('player-name-input').value.trim();
+    if (!name) return;
+    const existing = Object.keys(loadAllStats());
+    if (existing.some(n => n.toLowerCase() === name.toLowerCase())) {
+        document.getElementById('name-error').textContent = `"${name}" is already taken — select it above or choose a different name.`;
+        return;
+    }
+    document.getElementById('name-error').textContent = '';
+    selectPlayer(name);
+}
+
 function selectPlayer(name) {
     currentPlayer = name;
     document.getElementById('player-modal').classList.add('hidden');
@@ -755,14 +767,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     document.getElementById('play-again-btn').addEventListener('click', () => startNewGame(false));
     document.getElementById('start-btn').addEventListener('click', () => {
-        const name = document.getElementById('player-name-input').value.trim();
-        if (name) selectPlayer(name);
+        tryCreatePlayer();
     });
     document.getElementById('player-name-input').addEventListener('keydown', e => {
-        if (e.key === 'Enter') {
-            const name = document.getElementById('player-name-input').value.trim();
-            if (name) selectPlayer(name);
-        }
+        if (e.key === 'Enter') tryCreatePlayer();
+        else document.getElementById('name-error').textContent = '';
     });
 
     window.addEventListener('beforeunload', saveGameState);
