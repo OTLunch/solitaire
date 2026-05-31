@@ -263,12 +263,51 @@ function updateMoveIndicator() {
     const el = document.getElementById('move-indicator');
     if (!state.gameActive || state.gameWon) { el.textContent = ''; el.className = ''; return; }
     if (hasAvailableMove()) {
-        el.textContent = '✓ Moves available';
+        el.textContent = '✓ Moves available — click to highlight';
         el.className = 'moves-ok';
     } else {
         el.textContent = '✗ No moves available — try a new game';
         el.className = 'moves-none';
     }
+}
+
+function flashAvailableMove() {
+    if (!state.gameActive) return;
+
+    // Check waste card first
+    if (state.waste.length > 0) {
+        const wc = state.waste[state.waste.length - 1];
+        const canMove = findFoundationFor(wc) !== -1 ||
+            [0,1,2,3,4,5,6].some(col => canMoveToTableau(wc, col));
+        if (canMove) {
+            flashElement(document.querySelector('#waste .card'));
+            return;
+        }
+    }
+
+    // Check tableau cards
+    for (let col = 0; col < 7; col++) {
+        const cards = state.tableau[col];
+        for (let i = 0; i < cards.length; i++) {
+            if (!cards[i].faceUp) continue;
+            const card = cards[i];
+            const canMove = findFoundationFor(card) !== -1 ||
+                [0,1,2,3,4,5,6].some(c => c !== col && canMoveToTableau(card, c));
+            if (canMove) {
+                const colEl = document.getElementById(`tableau-${col}`);
+                flashElement(colEl.querySelectorAll('.card')[i]);
+                return;
+            }
+        }
+    }
+}
+
+function flashElement(el) {
+    if (!el) return;
+    el.classList.remove('flash');
+    void el.offsetWidth; // force reflow so re-adding the class restarts animation
+    el.classList.add('flash');
+    el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
 }
 
 // ===================== GAME MOVES =====================
@@ -538,6 +577,7 @@ function makeCard(card) {
 // ===================== EVENT LISTENERS =====================
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('stock').addEventListener('click', drawFromStock);
+    document.getElementById('move-indicator').addEventListener('click', flashAvailableMove);
     document.getElementById('undo-btn').addEventListener('click', undoMove);
     document.getElementById('undo-btn').disabled = true;
     document.getElementById('new-game-btn').addEventListener('click', () => startNewGame(true));
