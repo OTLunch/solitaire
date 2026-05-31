@@ -28,9 +28,10 @@ Set up a GitHub account and push the project so the code is safely version-contr
 
 ### Phase 3 — Share with Friends & Family
 Deploy the game to free hosting so anyone can play it via a web link.
-- [ ] Choose a hosting platform (e.g. GitHub Pages, Netlify, or Vercel)
-- [ ] Deploy the game
+- [x] Choose a hosting platform — Netlify
+- [x] Deploy the game — https://lunchtimesolitare.netlify.app
 - [ ] Share the link with friends and family
+- [ ] Add shared database (Supabase) so all devices share the same player stats
 
 ### Stretch Goal — App Store
 Package the game as a mobile app and publish to Apple App Store and/or Google Play.
@@ -41,13 +42,14 @@ Package the game as a mobile app and publish to Apple App Store and/or Google Pl
 ---
 
 ## Current Status
-> **Phase 1 ready to begin.** Project infrastructure is fully set up. Next step: spec out the game (game type, visual style, features), then build the prototype.
+> **Phase 3 complete.** Game is live and publicly accessible. Next: add shared player stats via Supabase (so all devices share the same leaderboard), then stretch goal of App Store.
 
 ## Setup Completed
 - Claude Code permissions configured (`.claude/settings.json`)
 - GitHub CLI installed and authenticated as **OTLunch**
 - Git initialized and connected to **https://github.com/OTLunch/solitaire**
-- First commit pushed to GitHub
+- Deployed to Netlify: **https://lunchtimesolitare.netlify.app**
+- Auto-deploys on every `git push` to master
 
 ---
 
