@@ -324,7 +324,6 @@ function saveToHistory() {
         tableau:     JSON.parse(JSON.stringify(state.tableau)),
         seconds:     state.seconds
     });
-    if (history.length > 100) history.shift();
     document.getElementById('undo-btn').disabled = false;
 }
 

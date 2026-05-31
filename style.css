@@ -388,6 +388,10 @@ button:active {
     cursor: default;
 }
 
+#new-game-btn {
+    margin-left: 20px;
+}
+
 #move-indicator {
     font-size: 13px;
     white-space: nowrap;
@@ -451,4 +455,43 @@ button:active {
 
 #play-again-btn:hover {
     background: rgba(255, 255, 255, 0.3);
+}
+
+/* ===================== IPAD / TABLET ===================== */
+@media (min-width: 600px) and (max-width: 1200px) and (pointer: coarse) {
+    .corner {
+        font-size: 30px;
+    }
+    .corner-suit {
+        font-size: 25px;
+        margin-top: 3px;
+    }
+    .card-center-suit {
+        font-size: 48px;
+    }
+    .card {
+        width: 96px;
+        height: 136px;
+        border-radius: 12px;
+    }
+    .pile {
+        width: 96px;
+        min-height: 136px;
+    }
+    .stat span:last-child {
+        font-size: 22px;
+    }
+    .stat-label {
+        font-size: 12px;
+    }
+    #timer {
+        font-size: 30px;
+    }
+    #player-name-display {
+        font-size: 18px;
+    }
+    button, #leaderboard-link {
+        font-size: 15px;
+        padding: 8px 16px;
+    }
 }
