@@ -388,9 +388,6 @@ button:active {
     cursor: default;
 }
 
-#new-game-btn {
-    margin-left: 20px;
-}
 
 #move-indicator {
     font-size: 13px;
