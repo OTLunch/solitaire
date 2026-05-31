@@ -23,7 +23,7 @@ let dragInfo      = null;
 let history       = [];
 
 // ===================== TOUCH DRAG =====================
-const touch = { active: false, clone: null, sourceEl: null, offsetX: 0, offsetY: 0 };
+const touch = { active: false, clone: null, sourceEl: null, offsetX: 0, offsetY: 0, moved: false };
 
 function addTouchDrag(cardEl, info) {
     cardEl.addEventListener('touchstart', e => {
@@ -42,6 +42,7 @@ function addTouchDrag(cardEl, info) {
         document.body.appendChild(clone);
         touch.clone = clone;
         touch.active = true;
+        touch.moved = false;
         cardEl.style.opacity = '0.3';
     }, { passive: false });
 }
@@ -52,6 +53,7 @@ document.addEventListener('touchmove', e => {
     const t = e.touches[0];
     touch.clone.style.left = (t.clientX - touch.offsetX) + 'px';
     touch.clone.style.top  = (t.clientY - touch.offsetY) + 'px';
+    touch.moved = true;
 }, { passive: false });
 
 document.addEventListener('touchend', e => {
@@ -82,6 +84,22 @@ document.addEventListener('touchcancel', () => {
     if (touch.clone) { touch.clone.remove(); touch.clone = null; }
     touch.active = false; dragInfo = null; renderGame();
 });
+
+function addDoubleTap(el, callback) {
+    let lastTap = 0;
+    el.addEventListener('touchend', e => {
+        if (touch.moved) { lastTap = 0; return; }
+        const now = Date.now();
+        if (now - lastTap < 300) {
+            e.preventDefault();
+            dragInfo = null;
+            callback();
+            lastTap = 0;
+        } else {
+            lastTap = now;
+        }
+    });
+}
 
 // ===================== SUPABASE DB =====================
 function initSupabase() {
@@ -640,6 +658,7 @@ function renderWaste() {
     });
     cardEl.addEventListener('dragend', () => cardEl.classList.remove('dragging'));
     cardEl.addEventListener('dblclick', () => autoMoveToFoundation('waste', -1));
+    addDoubleTap(cardEl, () => autoMoveToFoundation('waste', -1));
     addTouchDrag(cardEl, wasteInfo);
     el.appendChild(cardEl);
 }
@@ -691,8 +710,10 @@ function renderTableauCol(col) {
             cardEl.addEventListener('dragend', () => {
                 Array.from(el.querySelectorAll('.dragging')).forEach(c => c.classList.remove('dragging'));
             });
-            if (i === cards.length - 1)
+            if (i === cards.length - 1) {
                 cardEl.addEventListener('dblclick', () => autoMoveToFoundation('tableau', col));
+                addDoubleTap(cardEl, () => autoMoveToFoundation('tableau', col));
+            }
             addTouchDrag(cardEl, tabInfo);
             y += 36;
         } else { y += 22; }
