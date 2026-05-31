@@ -5,6 +5,7 @@ const VALUES = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
 const NUM_VAL = {A:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,J:11,Q:12,K:13};
 const RED_SUITS = new Set(['hearts','diamonds']);
 const STORAGE_KEY = 'solitaire_stats_v1';
+const SAVE_KEY    = 'solitaire_saved_game';
 
 // ===================== STATE =====================
 let state = {
@@ -98,6 +99,56 @@ function updateStatsDisplay() {
     document.getElementById('stat-best').textContent    = best;
 }
 
+// ===================== GAME STATE PERSISTENCE =====================
+function saveGameState() {
+    if (!currentPlayer || !state.gameActive || state.gameWon) return;
+    try {
+        localStorage.setItem(SAVE_KEY, JSON.stringify({
+            player:      currentPlayer,
+            stock:       state.stock,
+            waste:       state.waste,
+            foundations: state.foundations,
+            tableau:     state.tableau,
+            seconds:     state.seconds
+        }));
+    } catch (e) {}
+}
+
+function clearSavedGame() {
+    try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+}
+
+function loadSavedGame(playerName) {
+    try {
+        const data = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
+        if (data && data.player === playerName) return data;
+    } catch (e) {}
+    return null;
+}
+
+function restoreGameState(saved) {
+    stopTimer();
+    history = [];
+    document.getElementById('undo-btn').disabled = true;
+    document.getElementById('win-modal').classList.add('hidden');
+
+    state.stock       = saved.stock;
+    state.waste       = saved.waste;
+    state.foundations = saved.foundations;
+    state.tableau     = saved.tableau;
+    state.seconds     = saved.seconds;
+    state.gameActive  = true;
+    state.gameWon     = false;
+
+    document.getElementById('timer').textContent = formatTime(state.seconds);
+    state.timerInterval = setInterval(() => {
+        state.seconds++;
+        document.getElementById('timer').textContent = formatTime(state.seconds);
+    }, 1000);
+
+    renderGame();
+}
+
 // ===================== TIMER =====================
 function startTimer() {
     stopTimer();
@@ -158,7 +209,12 @@ function selectPlayer(name) {
     currentPlayer = name;
     document.getElementById('player-modal').classList.add('hidden');
     updateStatsDisplay();
-    startNewGame(false);
+    const saved = loadSavedGame(name);
+    if (saved) {
+        restoreGameState(saved);
+    } else {
+        startNewGame(false);
+    }
 }
 
 // ===================== DECK =====================
@@ -184,6 +240,7 @@ function startNewGame(countAbandoned = true) {
     if (countAbandoned && state.gameActive && !state.gameWon) recordAbandoned();
 
     stopTimer();
+    clearSavedGame();
     history = [];
     document.getElementById('undo-btn').disabled = true;
     document.getElementById('win-modal').classList.add('hidden');
@@ -232,27 +289,45 @@ function findFoundationFor(card) {
 }
 
 // ===================== AVAILABLE MOVE CHECK =====================
+function isProgressMove(card, fromCol, toCol) {
+    // Moving to foundation always advances the game
+    if (toCol === 'foundation') return findFoundationFor(card) !== -1;
+    // Waste card placed anywhere is progress (uses a drawn card)
+    if (fromCol === -1) return canMoveToTableau(card, toCol);
+    // Tableau-to-tableau only counts if it reveals a face-down card below
+    const cards = state.tableau[fromCol];
+    const cardIdx = cards.indexOf(card);
+    const revealsHidden = cardIdx > 0 && !cards[cardIdx - 1].faceUp;
+    return revealsHidden && canMoveToTableau(card, toCol);
+}
+
 function hasAvailableMove() {
-    // Build list of every moveable card and which column it came from (-1 = waste)
-    const sources = [];
-
-    if (state.waste.length > 0) {
-        sources.push({ card: state.waste[state.waste.length - 1], fromCol: -1 });
-    }
-
+    // Foundation moves: any face-up top tableau card or waste top card
+    if (state.waste.length > 0 && findFoundationFor(state.waste[state.waste.length - 1]) !== -1) return true;
     for (let col = 0; col < 7; col++) {
         const cards = state.tableau[col];
-        for (let i = 0; i < cards.length; i++) {
-            if (cards[i].faceUp) sources.push({ card: cards[i], fromCol: col });
+        if (cards.length > 0 && cards[cards.length - 1].faceUp &&
+            findFoundationFor(cards[cards.length - 1]) !== -1) return true;
+    }
+
+    // Waste-to-tableau moves
+    if (state.waste.length > 0) {
+        const wc = state.waste[state.waste.length - 1];
+        for (let col = 0; col < 7; col++) {
+            if (canMoveToTableau(wc, col)) return true;
         }
     }
 
-    for (const { card, fromCol } of sources) {
-        // Can it go to a foundation?
-        if (findFoundationFor(card) !== -1) return true;
-        // Can it go to any tableau column other than its own?
-        for (let col = 0; col < 7; col++) {
-            if (col !== fromCol && canMoveToTableau(card, col)) return true;
+    // Tableau-to-tableau moves that reveal a face-down card
+    for (let col = 0; col < 7; col++) {
+        const cards = state.tableau[col];
+        for (let i = 0; i < cards.length; i++) {
+            if (!cards[i].faceUp) continue;
+            const revealsHidden = i > 0 && !cards[i - 1].faceUp;
+            if (!revealsHidden) continue;
+            for (let tc = 0; tc < 7; tc++) {
+                if (tc !== col && canMoveToTableau(cards[i], tc)) return true;
+            }
         }
     }
 
@@ -274,29 +349,41 @@ function updateMoveIndicator() {
 function flashAvailableMove() {
     if (!state.gameActive) return;
 
-    // Check waste card first
-    if (state.waste.length > 0) {
-        const wc = state.waste[state.waste.length - 1];
-        const canMove = findFoundationFor(wc) !== -1 ||
-            [0,1,2,3,4,5,6].some(col => canMoveToTableau(wc, col));
-        if (canMove) {
-            flashElement(document.querySelector('#waste .card'));
-            return;
+    // Foundation moves first
+    if (state.waste.length > 0 && findFoundationFor(state.waste[state.waste.length - 1]) !== -1) {
+        flashElement(document.querySelector('#waste .card')); return;
+    }
+    for (let col = 0; col < 7; col++) {
+        const cards = state.tableau[col];
+        if (cards.length > 0 && cards[cards.length - 1].faceUp &&
+            findFoundationFor(cards[cards.length - 1]) !== -1) {
+            const colEl = document.getElementById(`tableau-${col}`);
+            flashElement(colEl.querySelectorAll('.card')[cards.length - 1]); return;
         }
     }
 
-    // Check tableau cards
+    // Waste-to-tableau
+    if (state.waste.length > 0) {
+        const wc = state.waste[state.waste.length - 1];
+        for (let col = 0; col < 7; col++) {
+            if (canMoveToTableau(wc, col)) {
+                flashElement(document.querySelector('#waste .card')); return;
+            }
+        }
+    }
+
+    // Tableau-to-tableau revealing a face-down card
     for (let col = 0; col < 7; col++) {
         const cards = state.tableau[col];
         for (let i = 0; i < cards.length; i++) {
             if (!cards[i].faceUp) continue;
-            const card = cards[i];
-            const canMove = findFoundationFor(card) !== -1 ||
-                [0,1,2,3,4,5,6].some(c => c !== col && canMoveToTableau(card, c));
-            if (canMove) {
-                const colEl = document.getElementById(`tableau-${col}`);
-                flashElement(colEl.querySelectorAll('.card')[i]);
-                return;
+            const revealsHidden = i > 0 && !cards[i - 1].faceUp;
+            if (!revealsHidden) continue;
+            for (let tc = 0; tc < 7; tc++) {
+                if (tc !== col && canMoveToTableau(cards[i], tc)) {
+                    const colEl = document.getElementById(`tableau-${col}`);
+                    flashElement(colEl.querySelectorAll('.card')[i]); return;
+                }
             }
         }
     }
@@ -414,6 +501,7 @@ function checkWin() {
     state.gameActive = false;
     stopTimer();
 
+    clearSavedGame();
     const prevBest = getPlayerStats(currentPlayer).bestTime;
     const isNewBest = prevBest === null || state.seconds < prevBest;
     recordWin(state.seconds);
@@ -597,5 +685,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (name) selectPlayer(name);
         }
     });
+
+    window.addEventListener('beforeunload', saveGameState);
+
     showPlayerModal();
 });
