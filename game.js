@@ -218,7 +218,8 @@ function saveGameState() {
     try {
         localStorage.setItem(SAVE_KEY, JSON.stringify({
             player: currentPlayer, stock: state.stock, waste: state.waste,
-            foundations: state.foundations, tableau: state.tableau, seconds: state.seconds
+            foundations: state.foundations, tableau: state.tableau, seconds: state.seconds,
+            history: history
         }));
     } catch (e) {}
 }
@@ -237,8 +238,8 @@ function loadSavedGame(playerName) {
 
 function restoreGameState(saved) {
     stopTimer();
-    history = [];
-    document.getElementById('undo-btn').disabled = true;
+    history = saved.history || [];
+    document.getElementById('undo-btn').disabled = history.length === 0;
     document.getElementById('win-modal').classList.add('hidden');
     state.stock = saved.stock; state.waste = saved.waste;
     state.foundations = saved.foundations; state.tableau = saved.tableau;
@@ -360,6 +361,112 @@ function cardMetrics() {
     return { h: 116, faceUp: 36, faceDown: 22 };
 }
 
+// ===================== WINNABILITY CHECK =====================
+function isGameWinnable(deck) {
+    // Fast heuristic solver: simulate optimal play and check if all 52 cards can reach foundations
+    const sim = {
+        stock: [],
+        waste: [],
+        foundations: [[],[],[],[]],
+        tableau: [[],[],[],[],[]
+,[]],
+        cycleCount: 0,
+        maxCycles: 10000
+    };
+
+    let idx = 0;
+    for (let col = 0; col < 7; col++)
+        for (let row = 0; row <= col; row++) {
+            const card = { ...deck[idx++] };
+            card.faceUp = (row === col);
+            sim.tableau[col].push(card);
+        }
+    while (idx < deck.length) sim.stock.push({ ...deck[idx++], faceUp: false });
+
+    // Simulate play: repeatedly move cards to foundations and tableau until no moves left
+    while (sim.cycleCount < sim.maxCycles) {
+        sim.cycleCount++;
+        let moved = false;
+
+        // Try to move foundation cards
+        const waste = sim.waste.length > 0 ? sim.waste[sim.waste.length - 1] : null;
+        if (waste && canMoveToFoundationSim(waste, sim)) moved = true;
+
+        for (let col = 0; col < 7; col++) {
+            const cards = sim.tableau[col];
+            if (cards.length > 0 && cards[cards.length - 1].faceUp) {
+                if (canMoveToFoundationSim(cards[cards.length - 1], sim)) moved = true;
+            }
+        }
+
+        // Try tableau-to-tableau moves (preferring to expose face-down cards)
+        for (let col = 0; col < 7; col++) {
+            const cards = sim.tableau[col];
+            for (let i = 0; i < cards.length; i++) {
+                if (!cards[i].faceUp) continue;
+                for (let col2 = 0; col2 < 7; col2++) {
+                    if (col === col2) continue;
+                    if (canMoveToTableauSim(cards[i], col2, sim)) {
+                        const moving = cards.splice(i, cards.length - i);
+                        sim.tableau[col2].push(...moving);
+                        moved = true;
+                        break;
+                    }
+                }
+                if (moved) break;
+            }
+            if (moved) break;
+        }
+
+        // Draw from stock
+        if (!moved && sim.stock.length > 0) {
+            sim.waste.push(sim.stock.shift());
+            moved = true;
+        }
+
+        if (!moved) break;
+    }
+
+    // Check if all 52 cards are in foundations
+    const cardsInFoundations = sim.foundations.reduce((sum, f) => sum + f.length, 0);
+    return cardsInFoundations === 52;
+}
+
+function canMoveToFoundationSim(card, sim) {
+    for (let fi = 0; fi < 4; fi++) {
+        const f = sim.foundations[fi];
+        if (f.length === 0 && card.value === 'A') {
+            sim.foundations[fi].push(card);
+            return true;
+        }
+        if (f.length > 0) {
+            const top = f[f.length - 1];
+            if (card.suit === top.suit && numVal(card) === numVal(top) + 1) {
+                sim.foundations[fi].push(card);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function canMoveToTableauSim(card, col, sim) {
+    const c = sim.tableau[col];
+    if (c.length === 0) {
+        if (card.value === 'K') {
+            sim.tableau[col].push(card);
+            return true;
+        }
+    } else {
+        const top = c[c.length - 1];
+        if (top.faceUp && isRed(card) !== isRed(top) && numVal(card) === numVal(top) - 1) {
+            sim.tableau[col].push(card);
+            return true;
+        }
+    }
+    return false;
+}
+
 // ===================== GAME SETUP =====================
 async function startNewGame(countAbandoned = true) {
     if (countAbandoned && state.gameActive && !state.gameWon) await recordAbandoned();
@@ -371,7 +478,20 @@ async function startNewGame(countAbandoned = true) {
     document.getElementById('undo-btn').disabled = true;
     document.getElementById('win-modal').classList.add('hidden');
 
-    const deck = shuffle(createDeck());
+    let deck;
+    let attempts = 0;
+    const maxAttempts = 1000;
+    
+    // Keep shuffling until we find a winnable deck
+    do {
+        deck = shuffle(createDeck());
+        attempts++;
+        if (attempts > maxAttempts) {
+            console.warn('Could not find winnable deck after 1000 attempts, dealing anyway');
+            break;
+        }
+    } while (!isGameWinnable(deck));
+
     state.stock = []; state.waste = []; state.foundations = [[],[],[],[]];
     state.tableau = [[],[],[],[],[],[],[]];
     state.gameWon = false; state.gameActive = true;
