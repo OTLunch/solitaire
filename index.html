@@ -16,7 +16,8 @@
             <div id="new-player-section">
                 <input type="text" id="player-name-input" placeholder="Enter your name" maxlength="20" autocomplete="off">
                 <p id="name-error"></p>
-                <button id="start-btn">Start Playing</button>
+                <p id="player-status" class="player-status"></p>
+                <button id="start-btn" type="button" onclick="tryCreatePlayer()">Start Playing</button>
             </div>
         </div>
     </div>
@@ -50,6 +51,7 @@
             <button id="undo-btn" title="Undo last move">↩ Undo</button>
             <a href="leaderboard.html" id="leaderboard-link">🏆 Leaderboard</a>
             <button id="new-game-btn">New Game</button>
+            <span id="generating-indicator" class="hidden">Generating game…</span>
             <span id="move-indicator"></span>
         </div>
     </header>
@@ -77,6 +79,21 @@
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+    <script>
+        // Safe wrapper to avoid ReferenceError if game.js hasn't registered tryCreatePlayer yet
+        window.startPlaying = function() {
+            if (window.tryCreatePlayer && typeof window.tryCreatePlayer === 'function') {
+                try { window.tryCreatePlayer(); } catch (e) { console.error(e); }
+                return;
+            }
+            const status = document.getElementById('player-status');
+            if (status) status.textContent = 'Starting… (loading scripts)';
+            // Fallback: try again after a short delay
+            setTimeout(() => {
+                if (window.tryCreatePlayer) window.tryCreatePlayer();
+            }, 200);
+        };
+    </script>
     <script src="game.js"></script>
 </body>
 </html>
