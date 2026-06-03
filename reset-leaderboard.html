@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Reset Leaderboard</title>
+</head>
+<body>
+    <h1>Reset Leaderboard</h1>
+    <button id="reset-btn">Click to Reset All Player Data</button>
+    <p id="status"></p>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+    <script>
+        const SUPABASE_URL = 'https://bdfflithcyzwbtuhtwsn.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_AJJXYJV2yvSGIkq5WBqL6A_XkYGk4pB';
+        const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        async function getRemainingPlayers() {
+            const { data, error } = await db.from('players').select('id,name,played,wins,best_time');
+            if (error) throw error;
+            return data || [];
+        }
+
+        async function deletePlayersById(ids) {
+            const { data, error } = await db.from('players').delete().in('id', ids).select('id');
+            if (error) throw error;
+            return data || [];
+        }
+
+        function setHiddenPlayers(ids) {
+            localStorage.setItem('solitaire_hidden_players', JSON.stringify(ids));
+        }
+
+        function clearHiddenPlayers() {
+            localStorage.removeItem('solitaire_hidden_players');
+        }
+
+        document.getElementById('reset-btn').addEventListener('click', async () => {
+            const status = document.getElementById('status');
+            status.textContent = 'Resetting...';
+            status.style.color = '';
+            try {
+                const remainingBefore = await getRemainingPlayers();
+                if (remainingBefore.length === 0) {
+                    clearHiddenPlayers();
+                    status.textContent = '✅ Leaderboard cleared! All player stats have already been removed.';
+                    status.style.color = 'green';
+                    setTimeout(() => window.location.href = 'leaderboard.html', 1500);
+                    return;
+                }
+
+                const deleted = await deletePlayersById(remainingBefore.map(p => p.id));
+                const remainingAfter = await getRemainingPlayers();
+                console.log('deleted rows', deleted, 'remaining after', remainingAfter);
+
+                if (remainingAfter.length === 0) {
+                    clearHiddenPlayers();
+                    status.textContent = '✅ Leaderboard cleared! All player stats have been reset.';
+                    status.style.color = 'green';
+                    setTimeout(() => window.location.href = 'leaderboard.html', 1500);
+                    return;
+                }
+
+                const remainingIds = remainingAfter.map(p => p.id);
+                setHiddenPlayers(remainingIds);
+                status.innerHTML = `⚠️ Reset incomplete: ${remainingAfter.length} player record(s) remain on the server.<br>` +
+                    `These players are now hidden locally: ` +
+                    remainingAfter.map(p => `${p.name || '(blank)'} [id:${p.id}]`).join(', ') +
+                    `<br><em>The remote Supabase delete was blocked, so this is a local workaround.</em>`;
+                status.style.color = 'orange';
+            } catch (e) {
+                status.textContent = '❌ Error: ' + (e.message || JSON.stringify(e));
+                status.style.color = 'red';
+            }
+        });
+    </script>
+</body>
+</html>

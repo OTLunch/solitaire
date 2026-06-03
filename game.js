@@ -4,8 +4,7 @@ const SYMBOLS = { spades: '♠', hearts: '♥', diamonds: '♦', clubs: '♣' };
 const VALUES = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
 const NUM_VAL = {A:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,J:11,Q:12,K:13};
 const RED_SUITS = new Set(['hearts','diamonds']);
-const SAVE_KEY    = 'solitaire_saved_game';
-const PLAYERS_KEY = 'solitaire_players';
+const SAVE_KEY  = 'solitaire_saved_game';
 
 const SUPABASE_URL = 'https://bdfflithcyzwbtuhtwsn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_AJJXYJV2yvSGIkq5WBqL6A_XkYGk4pB';
@@ -22,6 +21,7 @@ let currentPlayer = null;
 let playerCache   = null;   // { name, played, wins, best_time }
 let dragInfo      = null;
 let history       = [];
+let redoStack     = [];     // Stack for redo functionality
 let selectedCard  = null;   // { type, col, cardIdx } — click-to-move selection
 
 // ===================== TOUCH DRAG =====================
@@ -151,57 +151,18 @@ document.addEventListener('touchcancel', () => {
 
 // ===================== SUPABASE DB =====================
 function initSupabase() {
-    try {
-        if (typeof supabase === 'undefined' || !supabase.createClient) {
-            console.warn('Supabase script unavailable — running in offline mode.');
-            db = null;
-            return;
-        }
-        db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-    } catch (e) {
-        console.warn('Supabase initialization failed — running in offline mode.', e);
-        db = null;
-    }
-}
-
-window.addEventListener('error', event => {
-    const statusEl = document.getElementById('player-status');
-    if (statusEl) statusEl.textContent = `Error: ${event.message}`;
-});
-
-window.addEventListener('unhandledrejection', event => {
-    const statusEl = document.getElementById('player-status');
-    if (statusEl) statusEl.textContent = `Error: ${event.reason}`;
-});
-
-function getLocalPlayers() {
-    try {
-        return JSON.parse(localStorage.getItem(PLAYERS_KEY) || '[]');
-    } catch (e) {
-        return [];
-    }
-}
-
-function setLocalPlayers(players) {
-    try {
-        localStorage.setItem(PLAYERS_KEY, JSON.stringify(players));
-    } catch (e) {}
+    db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 }
 
 async function dbLoadAllPlayers() {
-    if (!db) return getLocalPlayers();
     try {
         const { data, error } = await db.from('players').select('*');
         if (error) throw error;
         return data || [];
-    } catch (e) { console.error('DB load error:', e); return getLocalPlayers(); }
+    } catch (e) { console.error('DB load error:', e); return []; }
 }
 
 async function dbGetPlayer(name) {
-    if (!db) {
-        const players = getLocalPlayers();
-        return players.find(p => p.name.toLowerCase() === name.toLowerCase()) || null;
-    }
     try {
         const { data, error } = await db.from('players').select('*')
             .ilike('name', name).limit(1);
@@ -211,14 +172,6 @@ async function dbGetPlayer(name) {
 }
 
 async function dbSavePlayer(player) {
-    if (!db) {
-        const players = getLocalPlayers();
-        const idx = players.findIndex(p => p.name.toLowerCase() === player.name.toLowerCase());
-        if (idx === -1) players.push(player);
-        else players[idx] = player;
-        setLocalPlayers(players);
-        return;
-    }
     try {
         const { error } = await db.from('players')
             .upsert(player, { onConflict: 'name' });
@@ -287,7 +240,9 @@ function loadSavedGame(playerName) {
 function restoreGameState(saved) {
     stopTimer();
     history = saved.history || [];
+    redoStack = [];
     document.getElementById('undo-btn').disabled = history.length === 0;
+    document.getElementById('redo-btn').disabled = true;
     document.getElementById('win-modal').classList.add('hidden');
     state.stock = saved.stock; state.waste = saved.waste;
     state.foundations = saved.foundations; state.tableau = saved.tableau;
@@ -327,7 +282,6 @@ async function showPlayerModal() {
     document.getElementById('player-modal').classList.remove('hidden');
     document.getElementById('player-name-input').value = '';
     document.getElementById('name-error').textContent = '';
-    document.getElementById('player-status').textContent = 'Ready to start';
 
     const container = document.getElementById('existing-players');
     container.innerHTML = '<p class="existing-label">Loading players…</p>';
@@ -364,32 +318,20 @@ async function showPlayerModal() {
 
 async function tryCreatePlayer() {
     const name = document.getElementById('player-name-input').value.trim();
-    const errorEl = document.getElementById('name-error');
-    const statusEl = document.getElementById('player-status');
-    if (!name) {
-        statusEl.textContent = '';
-        errorEl.textContent = 'Please enter a name to start playing.';
-        return;
-    }
-    errorEl.textContent = '';
-    statusEl.textContent = 'Starting…';
+    if (!name) return;
     const existing = await dbGetPlayer(name);
     if (existing) {
-        statusEl.textContent = '';
-        errorEl.textContent =
+        document.getElementById('name-error').textContent =
             `"${name}" is already taken — select it above or choose a different name.`;
         return;
     }
     await dbSavePlayer({ name, played: 0, wins: 0, best_time: null });
+    document.getElementById('name-error').textContent = '';
     selectPlayer(name);
 }
 
-window.tryCreatePlayer = tryCreatePlayer;
-
 async function selectPlayer(name) {
     currentPlayer = name;
-    const statusEl = document.getElementById('player-status');
-    if (statusEl) statusEl.textContent = '';
     document.getElementById('player-modal').classList.add('hidden');
     playerCache = await dbGetPlayer(name) || { name, played: 0, wins: 0, best_time: null };
     updateStatsDisplay();
@@ -422,20 +364,15 @@ function cardMetrics() {
     return { h: 116, faceUp: 36, faceDown: 22 };
 }
 
-function setGeneratingIndicator(show) {
-    const el = document.getElementById('generating-indicator');
-    if (!el) return;
-    el.classList.toggle('hidden', !show);
-}
-
 // ===================== WINNABILITY CHECK =====================
 function isGameWinnable(deck) {
-    // Fast heuristic solver: simulate play and check whether all 52 cards can reach foundations.
+    // Fast heuristic solver: simulate optimal play and check if all 52 cards can reach foundations
     const sim = {
         stock: [],
         waste: [],
-        foundations: [[], [], [], []],
-        tableau: [[], [], [], [], [], [], []],
+        foundations: [[],[],[],[]],
+        tableau: [[],[],[],[],[]
+,[]],
         cycleCount: 0,
         maxCycles: 10000
     };
@@ -449,79 +386,42 @@ function isGameWinnable(deck) {
         }
     while (idx < deck.length) sim.stock.push({ ...deck[idx++], faceUp: false });
 
-    const findFoundationIndexForSim = card => {
-        for (let fi = 0; fi < 4; fi++) {
-            const f = sim.foundations[fi];
-            if (f.length === 0 && card.value === 'A') return fi;
-            if (f.length > 0) {
-                const top = f[f.length - 1];
-                if (card.suit === top.suit && numVal(card) === numVal(top) + 1) return fi;
-            }
-        }
-        return -1;
-    };
-
-    const moveWasteToFoundationSim = () => {
-        if (sim.waste.length === 0) return false;
-        const card = sim.waste[sim.waste.length - 1];
-        const fi = findFoundationIndexForSim(card);
-        if (fi === -1) return false;
-        sim.waste.pop();
-        sim.foundations[fi].push(card);
-        return true;
-    };
-
-    const moveTableauTopToFoundationSim = col => {
-        const pile = sim.tableau[col];
-        if (pile.length === 0 || !pile[pile.length - 1].faceUp) return false;
-        const card = pile[pile.length - 1];
-        const fi = findFoundationIndexForSim(card);
-        if (fi === -1) return false;
-        pile.pop();
-        if (pile.length > 0 && !pile[pile.length - 1].faceUp) pile[pile.length - 1].faceUp = true;
-        sim.foundations[fi].push(card);
-        return true;
-    };
-
-    const moveTableauSequenceToTableauSim = () => {
-        for (let from = 0; from < 7; from++) {
-            const cards = sim.tableau[from];
-            for (let i = 0; i < cards.length; i++) {
-                if (!cards[i].faceUp) continue;
-                for (let to = 0; to < 7; to++) {
-                    if (from === to) continue;
-                    const card = cards[i];
-                    const dest = sim.tableau[to];
-                    if (dest.length === 0) {
-                        if (card.value !== 'K') continue;
-                    } else {
-                        const top = dest[dest.length - 1];
-                        if (!top.faceUp || isRed(card) === isRed(top) || numVal(card) !== numVal(top) - 1) continue;
-                    }
-                    const moving = cards.splice(i);
-                    sim.tableau[to].push(...moving);
-                    if (cards.length > 0 && !cards[cards.length - 1].faceUp) cards[cards.length - 1].faceUp = true;
-                    return true;
-                }
-            }
-        }
-        return false;
-    };
-
+    // Simulate play: repeatedly move cards to foundations and tableau until no moves left
     while (sim.cycleCount < sim.maxCycles) {
         sim.cycleCount++;
         let moved = false;
 
-        if (moveWasteToFoundationSim()) moved = true;
+        // Try to move foundation cards
+        const waste = sim.waste.length > 0 ? sim.waste[sim.waste.length - 1] : null;
+        if (waste && canMoveToFoundationSim(waste, sim)) moved = true;
 
-        if (!moved) {
-            for (let col = 0; col < 7; col++) {
-                if (moveTableauTopToFoundationSim(col)) { moved = true; break; }
+        for (let col = 0; col < 7; col++) {
+            const cards = sim.tableau[col];
+            if (cards.length > 0 && cards[cards.length - 1].faceUp) {
+                if (canMoveToFoundationSim(cards[cards.length - 1], sim)) moved = true;
             }
         }
 
-        if (!moved) moved = moveTableauSequenceToTableauSim();
+        // Try tableau-to-tableau moves (preferring to expose face-down cards)
+        for (let col = 0; col < 7; col++) {
+            const cards = sim.tableau[col];
+            for (let i = 0; i < cards.length; i++) {
+                if (!cards[i].faceUp) continue;
+                for (let col2 = 0; col2 < 7; col2++) {
+                    if (col === col2) continue;
+                    if (canMoveToTableauSim(cards[i], col2, sim)) {
+                        const moving = cards.splice(i, cards.length - i);
+                        sim.tableau[col2].push(...moving);
+                        moved = true;
+                        break;
+                    }
+                }
+                if (moved) break;
+            }
+            if (moved) break;
+        }
 
+        // Draw from stock
         if (!moved && sim.stock.length > 0) {
             sim.waste.push(sim.stock.shift());
             moved = true;
@@ -530,6 +430,7 @@ function isGameWinnable(deck) {
         if (!moved) break;
     }
 
+    // Check if all 52 cards are in foundations
     const cardsInFoundations = sim.foundations.reduce((sum, f) => sum + f.length, 0);
     return cardsInFoundations === 52;
 }
@@ -537,10 +438,16 @@ function isGameWinnable(deck) {
 function canMoveToFoundationSim(card, sim) {
     for (let fi = 0; fi < 4; fi++) {
         const f = sim.foundations[fi];
-        if (f.length === 0 && card.value === 'A') return true;
+        if (f.length === 0 && card.value === 'A') {
+            sim.foundations[fi].push(card);
+            return true;
+        }
         if (f.length > 0) {
             const top = f[f.length - 1];
-            if (card.suit === top.suit && numVal(card) === numVal(top) + 1) return true;
+            if (card.suit === top.suit && numVal(card) === numVal(top) + 1) {
+                sim.foundations[fi].push(card);
+                return true;
+            }
         }
     }
     return false;
@@ -548,9 +455,19 @@ function canMoveToFoundationSim(card, sim) {
 
 function canMoveToTableauSim(card, col, sim) {
     const c = sim.tableau[col];
-    if (c.length === 0) return card.value === 'K';
-    const top = c[c.length - 1];
-    return top.faceUp && isRed(card) !== isRed(top) && numVal(card) === numVal(top) - 1;
+    if (c.length === 0) {
+        if (card.value === 'K') {
+            sim.tableau[col].push(card);
+            return true;
+        }
+    } else {
+        const top = c[c.length - 1];
+        if (top.faceUp && isRed(card) !== isRed(top) && numVal(card) === numVal(top) - 1) {
+            sim.tableau[col].push(card);
+            return true;
+        }
+    }
+    return false;
 }
 
 // ===================== GAME SETUP =====================
@@ -563,45 +480,38 @@ async function startNewGame(countAbandoned = true) {
     selectedCard = null;
     document.getElementById('undo-btn').disabled = true;
     document.getElementById('win-modal').classList.add('hidden');
-    setGeneratingIndicator(true);
 
-    try {
-        let deck;
-        let attempts = 0;
-        const maxAttempts = 1000;
+    let deck;
+    let attempts = 0;
+    const maxAttempts = 1000;
+    
+    // Keep shuffling until we find a winnable deck
+    do {
+        deck = shuffle(createDeck());
+        attempts++;
+        if (attempts > maxAttempts) {
+            console.warn('Could not find winnable deck after 1000 attempts, dealing anyway');
+            break;
+        }
+    } while (!isGameWinnable(deck));
 
-        // Keep shuffling until we find a winnable deck. Allow the browser to stay responsive while searching.
-        do {
-            deck = shuffle(createDeck());
-            attempts++;
-            if (attempts > maxAttempts) {
-                console.warn('Could not find winnable deck after 1000 attempts, dealing anyway');
-                break;
-            }
-            if (attempts % 25 === 0) await new Promise(resolve => setTimeout(resolve, 0));
-        } while (!isGameWinnable(deck));
+    state.stock = []; state.waste = []; state.foundations = [[],[],[],[]];
+    state.tableau = [[],[],[],[],[],[],[]];
+    state.gameWon = false; state.gameActive = true;
 
-        state.stock = []; state.waste = []; state.foundations = [[], [], [], []];
-        state.tableau = [[], [], [], [], [], [], []];
-        state.gameWon = false; state.gameActive = true;
-
-        let idx = 0;
-        for (let col = 0; col < 7; col++)
-            for (let row = 0; row <= col; row++) {
-                const card = { ...deck[idx++] };
-                card.faceUp = (row === col);
-                state.tableau[col].push(card);
-            }
-        while (idx < deck.length) state.stock.push({ ...deck[idx++], faceUp: false });
-        startTimer();
-        renderGame();
-    } finally {
-        setGeneratingIndicator(false);
-    }
+    let idx = 0;
+    for (let col = 0; col < 7; col++)
+        for (let row = 0; row <= col; row++) {
+            const card = { ...deck[idx++] };
+            card.faceUp = (row === col);
+            state.tableau[col].push(card);
+        }
+    while (idx < deck.length) state.stock.push({ ...deck[idx++], faceUp: false });
+    startTimer();
+    renderGame();
 }
 
-
-// ===================== UNDO =====================
+// ===================== UNDO/REDO =====================
 function saveToHistory() {
     history.push({
         stock:       JSON.parse(JSON.stringify(state.stock)),
@@ -610,17 +520,48 @@ function saveToHistory() {
         tableau:     JSON.parse(JSON.stringify(state.tableau)),
         seconds:     state.seconds
     });
+    redoStack = []; // Clear redo stack when new move is made
     document.getElementById('undo-btn').disabled = false;
+    document.getElementById('redo-btn').disabled = true;
 }
 
 function undoMove() {
     if (history.length === 0) return;
     const prev = history.pop();
+    // Save current state to redo stack
+    redoStack.push({
+        stock:       JSON.parse(JSON.stringify(state.stock)),
+        waste:       JSON.parse(JSON.stringify(state.waste)),
+        foundations: JSON.parse(JSON.stringify(state.foundations)),
+        tableau:     JSON.parse(JSON.stringify(state.tableau)),
+        seconds:     state.seconds
+    });
     state.stock = prev.stock; state.waste = prev.waste;
     state.foundations = prev.foundations; state.tableau = prev.tableau;
     state.seconds = prev.seconds;
     document.getElementById('timer').textContent = formatTime(state.seconds);
     document.getElementById('undo-btn').disabled = history.length === 0;
+    document.getElementById('redo-btn').disabled = false;
+    renderGame();
+}
+
+function redoMove() {
+    if (redoStack.length === 0) return;
+    const next = redoStack.pop();
+    // Save current state to history
+    history.push({
+        stock:       JSON.parse(JSON.stringify(state.stock)),
+        waste:       JSON.parse(JSON.stringify(state.waste)),
+        foundations: JSON.parse(JSON.stringify(state.foundations)),
+        tableau:     JSON.parse(JSON.stringify(state.tableau)),
+        seconds:     state.seconds
+    });
+    state.stock = next.stock; state.waste = next.waste;
+    state.foundations = next.foundations; state.tableau = next.tableau;
+    state.seconds = next.seconds;
+    document.getElementById('timer').textContent = formatTime(state.seconds);
+    document.getElementById('undo-btn').disabled = false;
+    document.getElementById('redo-btn').disabled = redoStack.length === 0;
     renderGame();
 }
 
@@ -733,6 +674,7 @@ let autoCompleting = false;
 
 function allCardsRevealed() {
     if (!state.gameActive || state.gameWon) return false;
+    // Only start auto-complete when stock is empty AND all cards are revealed
     if (state.stock.length > 0) return false;
     for (const col of state.tableau) {
         if (col.some(card => !card.faceUp)) return false;
@@ -1087,6 +1029,37 @@ function makeCard(card) {
     return el;
 }
 
+// ===================== CONFIRMATION DIALOG =====================
+let confirmCallback = null;
+
+function showConfirm(title, message, onConfirm) {
+    confirmCallback = onConfirm;
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-message').textContent = message;
+    document.getElementById('confirm-modal').classList.remove('hidden');
+}
+
+function hideConfirm() {
+    document.getElementById('confirm-modal').classList.add('hidden');
+    confirmCallback = null;
+}
+
+// ===================== GAME CONTROL FUNCTIONS =====================
+function restartGame() {
+    // Restart without recording as abandoned - just reset the current game
+    stopTimer();
+    clearSavedGame();
+    history = [];
+    redoStack = [];
+    autoCompleting = false;
+    selectedCard = null;
+    document.getElementById('undo-btn').disabled = true;
+    document.getElementById('redo-btn').disabled = true;
+    document.getElementById('win-modal').classList.add('hidden');
+
+    startNewGame(false); // false = don't record as abandoned
+}
+
 // ===================== EVENT LISTENERS =====================
 document.addEventListener('DOMContentLoaded', () => {
     initSupabase();
@@ -1095,15 +1068,37 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('stock').addEventListener('touchend', e => { e.preventDefault(); drawFromStock(); });
     document.getElementById('undo-btn').addEventListener('click', undoMove);
     document.getElementById('undo-btn').disabled = true;
+    document.getElementById('redo-btn').addEventListener('click', redoMove);
+    document.getElementById('redo-btn').disabled = true;
+    document.getElementById('restart-btn').addEventListener('click', () => {
+        if (state.gameActive && !state.gameWon) {
+            showConfirm('Restart Game?', 'Start over with a new hand?', restartGame);
+        }
+    });
     document.getElementById('move-indicator').addEventListener('click', checkAndShowMoves);
 
-    document.getElementById('new-game-btn').addEventListener('click', async () => {
-        await startNewGame(true);
+    document.getElementById('new-game-btn').addEventListener('click', () => {
+        if (state.gameActive && !state.gameWon) {
+            showConfirm('New Game?', 'Do you want to forfeit this game and start a new one?', async () => {
+                hideConfirm();
+                await startNewGame(true);
+            });
+        } else {
+            startNewGame(true);
+        }
     });
-    document.getElementById('change-player-btn').addEventListener('click', async () => {
-        await recordAbandoned();
-        state.gameActive = false;
-        showPlayerModal();
+    document.getElementById('change-player-btn').addEventListener('click', () => {
+        if (state.gameActive && !state.gameWon) {
+            showConfirm('Change Player?', 'Do you want to forfeit this game and change players?', async () => {
+                hideConfirm();
+                await recordAbandoned();
+                state.gameActive = false;
+                showPlayerModal();
+            });
+        } else {
+            state.gameActive = false;
+            showPlayerModal();
+        }
     });
     document.getElementById('play-again-btn').addEventListener('click', () => startNewGame(false));
     document.getElementById('start-btn').addEventListener('click', tryCreatePlayer);
@@ -1111,6 +1106,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Enter') tryCreatePlayer();
         else document.getElementById('name-error').textContent = '';
     });
+
+    // Confirmation dialog buttons
+    document.getElementById('confirm-yes-btn').addEventListener('click', () => {
+        hideConfirm();
+        if (confirmCallback) confirmCallback();
+    });
+    document.getElementById('confirm-no-btn').addEventListener('click', hideConfirm);
 
     window.addEventListener('beforeunload', saveGameState);
     window.addEventListener('pagehide', saveGameState);

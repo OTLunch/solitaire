@@ -110,23 +110,42 @@
             return m + ':' + sec.toString().padStart(2, '0');
         }
 
+        function getHiddenPlayerIds() {
+            const raw = localStorage.getItem('solitaire_hidden_players');
+            if (!raw) return [];
+            try {
+                return JSON.parse(raw).filter(id => id !== null && id !== undefined);
+            } catch (e) {
+                return [];
+            }
+        }
+
         async function buildLeaderboard() {
+            const hiddenIds = getHiddenPlayerIds();
             const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             const { data, error } = await db.from('players').select('*');
 
-            if (error || !data || data.length === 0) {
+            if (error || !data) {
                 document.getElementById('no-players').classList.remove('hidden');
                 return;
             }
 
-            const players = data.map(p => ({
-                name:     p.name,
-                played:   p.played || 0,
-                wins:     p.wins || 0,
-                losses:   (p.played || 0) - (p.wins || 0),
-                rate:     p.played > 0 ? (p.wins / p.played) : 0,
-                bestTime: p.best_time || null
-            }));
+            const players = data
+                .filter(p => !hiddenIds.includes(p.id))
+                .map(p => ({
+                    id:       p.id,
+                    name:     p.name,
+                    played:   p.played || 0,
+                    wins:     p.wins || 0,
+                    losses:   (p.played || 0) - (p.wins || 0),
+                    rate:     p.played > 0 ? (p.wins / p.played) : 0,
+                    bestTime: p.best_time || null
+                }));
+
+            if (players.length === 0) {
+                document.getElementById('no-players').classList.remove('hidden');
+                return;
+            }
 
             players.sort((a, b) => b.rate - a.rate || b.wins - a.wins);
 
