@@ -5,6 +5,7 @@ const VALUES = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
 const NUM_VAL = {A:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,J:11,Q:12,K:13};
 const RED_SUITS = new Set(['hearts','diamonds']);
 const SAVE_KEY  = 'solitaire_saved_game';
+const LOCAL_PLAY_MODE = true;
 
 const SUPABASE_URL = 'https://bdfflithcyzwbtuhtwsn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_AJJXYJV2yvSGIkq5WBqL6A_XkYGk4pB';
@@ -371,8 +372,7 @@ function isGameWinnable(deck) {
         stock: [],
         waste: [],
         foundations: [[],[],[],[]],
-        tableau: [[],[],[],[],[]
-,[]],
+        tableau: [[],[],[],[],[],[],[]],
         cycleCount: 0,
         maxCycles: 10000
     };
@@ -481,19 +481,7 @@ async function startNewGame(countAbandoned = true) {
     document.getElementById('undo-btn').disabled = true;
     document.getElementById('win-modal').classList.add('hidden');
 
-    let deck;
-    let attempts = 0;
-    const maxAttempts = 1000;
-    
-    // Keep shuffling until we find a winnable deck
-    do {
-        deck = shuffle(createDeck());
-        attempts++;
-        if (attempts > maxAttempts) {
-            console.warn('Could not find winnable deck after 1000 attempts, dealing anyway');
-            break;
-        }
-    } while (!isGameWinnable(deck));
+    const deck = shuffle(createDeck());
 
     state.stock = []; state.waste = []; state.foundations = [[],[],[],[]];
     state.tableau = [[],[],[],[],[],[],[]];
@@ -1046,23 +1034,29 @@ function hideConfirm() {
 
 // ===================== GAME CONTROL FUNCTIONS =====================
 function restartGame() {
-    // Restart without recording as abandoned - just reset the current game
+    // Restart by undoing all moves back to the initial state (same hand)
     stopTimer();
     clearSavedGame();
-    history = [];
+    
+    // Undo all moves to get back to the initial state
+    while (history.length > 0) {
+        undoMove();
+    }
     redoStack = [];
     autoCompleting = false;
     selectedCard = null;
     document.getElementById('undo-btn').disabled = true;
     document.getElementById('redo-btn').disabled = true;
     document.getElementById('win-modal').classList.add('hidden');
-
-    startNewGame(false); // false = don't record as abandoned
+    
+    // Restart the timer
+    startTimer();
+    renderGame();
 }
 
 // ===================== EVENT LISTENERS =====================
 document.addEventListener('DOMContentLoaded', () => {
-    initSupabase();
+    if (!LOCAL_PLAY_MODE) initSupabase();
 
     document.getElementById('stock').addEventListener('click', () => { selectedCard = null; drawFromStock(); });
     document.getElementById('stock').addEventListener('touchend', e => { e.preventDefault(); drawFromStock(); });
@@ -1072,7 +1066,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('redo-btn').disabled = true;
     document.getElementById('restart-btn').addEventListener('click', () => {
         if (state.gameActive && !state.gameWon) {
-            showConfirm('Restart Game?', 'Start over with a new hand?', restartGame);
+            showConfirm('Restart Game?', 'Start over with the same hand?', restartGame);
         }
     });
     document.getElementById('move-indicator').addEventListener('click', checkAndShowMoves);
@@ -1080,7 +1074,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('new-game-btn').addEventListener('click', () => {
         if (state.gameActive && !state.gameWon) {
             showConfirm('New Game?', 'Do you want to forfeit this game and start a new one?', async () => {
-                hideConfirm();
                 await startNewGame(true);
             });
         } else {
@@ -1090,7 +1083,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('change-player-btn').addEventListener('click', () => {
         if (state.gameActive && !state.gameWon) {
             showConfirm('Change Player?', 'Do you want to forfeit this game and change players?', async () => {
-                hideConfirm();
                 await recordAbandoned();
                 state.gameActive = false;
                 showPlayerModal();
@@ -1109,13 +1101,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Confirmation dialog buttons
     document.getElementById('confirm-yes-btn').addEventListener('click', () => {
-        hideConfirm();
         if (confirmCallback) confirmCallback();
+        hideConfirm();
     });
     document.getElementById('confirm-no-btn').addEventListener('click', hideConfirm);
 
     window.addEventListener('beforeunload', saveGameState);
     window.addEventListener('pagehide', saveGameState);
     document.addEventListener('visibilitychange', () => { if (document.hidden) saveGameState(); });
-    showPlayerModal();
+
+    if (LOCAL_PLAY_MODE) {
+        document.getElementById('player-modal').classList.add('hidden');
+        currentPlayer = 'Local Player';
+        playerCache = { name: currentPlayer, played: 0, wins: 0, best_time: null };
+        updateStatsDisplay();
+        startNewGame(false);
+    } else {
+        showPlayerModal();
+    }
 });
