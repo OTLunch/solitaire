@@ -21,7 +21,6 @@ let currentPlayer = null;
 let playerCache   = null;   // { name, played, wins, best_time }
 let dragInfo      = null;
 let history       = [];
-let redoStack     = [];     // Stack for redo functionality
 let selectedCard  = null;   // { type, col, cardIdx } — click-to-move selection
 
 // ===================== TOUCH DRAG =====================
@@ -219,8 +218,7 @@ function saveGameState() {
     try {
         localStorage.setItem(SAVE_KEY, JSON.stringify({
             player: currentPlayer, stock: state.stock, waste: state.waste,
-            foundations: state.foundations, tableau: state.tableau, seconds: state.seconds,
-            history: history
+            foundations: state.foundations, tableau: state.tableau, seconds: state.seconds
         }));
     } catch (e) {}
 }
@@ -239,10 +237,8 @@ function loadSavedGame(playerName) {
 
 function restoreGameState(saved) {
     stopTimer();
-    history = saved.history || [];
-    redoStack = [];
-    document.getElementById('undo-btn').disabled = history.length === 0;
-    document.getElementById('redo-btn').disabled = true;
+    history = [];
+    document.getElementById('undo-btn').disabled = true;
     document.getElementById('win-modal').classList.add('hidden');
     state.stock = saved.stock; state.waste = saved.waste;
     state.foundations = saved.foundations; state.tableau = saved.tableau;
@@ -364,112 +360,6 @@ function cardMetrics() {
     return { h: 116, faceUp: 36, faceDown: 22 };
 }
 
-// ===================== WINNABILITY CHECK =====================
-function isGameWinnable(deck) {
-    // Fast heuristic solver: simulate optimal play and check if all 52 cards can reach foundations
-    const sim = {
-        stock: [],
-        waste: [],
-        foundations: [[],[],[],[]],
-        tableau: [[],[],[],[],[]
-,[]],
-        cycleCount: 0,
-        maxCycles: 10000
-    };
-
-    let idx = 0;
-    for (let col = 0; col < 7; col++)
-        for (let row = 0; row <= col; row++) {
-            const card = { ...deck[idx++] };
-            card.faceUp = (row === col);
-            sim.tableau[col].push(card);
-        }
-    while (idx < deck.length) sim.stock.push({ ...deck[idx++], faceUp: false });
-
-    // Simulate play: repeatedly move cards to foundations and tableau until no moves left
-    while (sim.cycleCount < sim.maxCycles) {
-        sim.cycleCount++;
-        let moved = false;
-
-        // Try to move foundation cards
-        const waste = sim.waste.length > 0 ? sim.waste[sim.waste.length - 1] : null;
-        if (waste && canMoveToFoundationSim(waste, sim)) moved = true;
-
-        for (let col = 0; col < 7; col++) {
-            const cards = sim.tableau[col];
-            if (cards.length > 0 && cards[cards.length - 1].faceUp) {
-                if (canMoveToFoundationSim(cards[cards.length - 1], sim)) moved = true;
-            }
-        }
-
-        // Try tableau-to-tableau moves (preferring to expose face-down cards)
-        for (let col = 0; col < 7; col++) {
-            const cards = sim.tableau[col];
-            for (let i = 0; i < cards.length; i++) {
-                if (!cards[i].faceUp) continue;
-                for (let col2 = 0; col2 < 7; col2++) {
-                    if (col === col2) continue;
-                    if (canMoveToTableauSim(cards[i], col2, sim)) {
-                        const moving = cards.splice(i, cards.length - i);
-                        sim.tableau[col2].push(...moving);
-                        moved = true;
-                        break;
-                    }
-                }
-                if (moved) break;
-            }
-            if (moved) break;
-        }
-
-        // Draw from stock
-        if (!moved && sim.stock.length > 0) {
-            sim.waste.push(sim.stock.shift());
-            moved = true;
-        }
-
-        if (!moved) break;
-    }
-
-    // Check if all 52 cards are in foundations
-    const cardsInFoundations = sim.foundations.reduce((sum, f) => sum + f.length, 0);
-    return cardsInFoundations === 52;
-}
-
-function canMoveToFoundationSim(card, sim) {
-    for (let fi = 0; fi < 4; fi++) {
-        const f = sim.foundations[fi];
-        if (f.length === 0 && card.value === 'A') {
-            sim.foundations[fi].push(card);
-            return true;
-        }
-        if (f.length > 0) {
-            const top = f[f.length - 1];
-            if (card.suit === top.suit && numVal(card) === numVal(top) + 1) {
-                sim.foundations[fi].push(card);
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-function canMoveToTableauSim(card, col, sim) {
-    const c = sim.tableau[col];
-    if (c.length === 0) {
-        if (card.value === 'K') {
-            sim.tableau[col].push(card);
-            return true;
-        }
-    } else {
-        const top = c[c.length - 1];
-        if (top.faceUp && isRed(card) !== isRed(top) && numVal(card) === numVal(top) - 1) {
-            sim.tableau[col].push(card);
-            return true;
-        }
-    }
-    return false;
-}
-
 // ===================== GAME SETUP =====================
 async function startNewGame(countAbandoned = true) {
     if (countAbandoned && state.gameActive && !state.gameWon) await recordAbandoned();
@@ -481,20 +371,7 @@ async function startNewGame(countAbandoned = true) {
     document.getElementById('undo-btn').disabled = true;
     document.getElementById('win-modal').classList.add('hidden');
 
-    let deck;
-    let attempts = 0;
-    const maxAttempts = 1000;
-    
-    // Keep shuffling until we find a winnable deck
-    do {
-        deck = shuffle(createDeck());
-        attempts++;
-        if (attempts > maxAttempts) {
-            console.warn('Could not find winnable deck after 1000 attempts, dealing anyway');
-            break;
-        }
-    } while (!isGameWinnable(deck));
-
+    const deck = shuffle(createDeck());
     state.stock = []; state.waste = []; state.foundations = [[],[],[],[]];
     state.tableau = [[],[],[],[],[],[],[]];
     state.gameWon = false; state.gameActive = true;
@@ -511,7 +388,7 @@ async function startNewGame(countAbandoned = true) {
     renderGame();
 }
 
-// ===================== UNDO/REDO =====================
+// ===================== UNDO =====================
 function saveToHistory() {
     history.push({
         stock:       JSON.parse(JSON.stringify(state.stock)),
@@ -520,48 +397,17 @@ function saveToHistory() {
         tableau:     JSON.parse(JSON.stringify(state.tableau)),
         seconds:     state.seconds
     });
-    redoStack = []; // Clear redo stack when new move is made
     document.getElementById('undo-btn').disabled = false;
-    document.getElementById('redo-btn').disabled = true;
 }
 
 function undoMove() {
     if (history.length === 0) return;
     const prev = history.pop();
-    // Save current state to redo stack
-    redoStack.push({
-        stock:       JSON.parse(JSON.stringify(state.stock)),
-        waste:       JSON.parse(JSON.stringify(state.waste)),
-        foundations: JSON.parse(JSON.stringify(state.foundations)),
-        tableau:     JSON.parse(JSON.stringify(state.tableau)),
-        seconds:     state.seconds
-    });
     state.stock = prev.stock; state.waste = prev.waste;
     state.foundations = prev.foundations; state.tableau = prev.tableau;
     state.seconds = prev.seconds;
     document.getElementById('timer').textContent = formatTime(state.seconds);
     document.getElementById('undo-btn').disabled = history.length === 0;
-    document.getElementById('redo-btn').disabled = false;
-    renderGame();
-}
-
-function redoMove() {
-    if (redoStack.length === 0) return;
-    const next = redoStack.pop();
-    // Save current state to history
-    history.push({
-        stock:       JSON.parse(JSON.stringify(state.stock)),
-        waste:       JSON.parse(JSON.stringify(state.waste)),
-        foundations: JSON.parse(JSON.stringify(state.foundations)),
-        tableau:     JSON.parse(JSON.stringify(state.tableau)),
-        seconds:     state.seconds
-    });
-    state.stock = next.stock; state.waste = next.waste;
-    state.foundations = next.foundations; state.tableau = next.tableau;
-    state.seconds = next.seconds;
-    document.getElementById('timer').textContent = formatTime(state.seconds);
-    document.getElementById('undo-btn').disabled = false;
-    document.getElementById('redo-btn').disabled = redoStack.length === 0;
     renderGame();
 }
 
@@ -674,7 +520,6 @@ let autoCompleting = false;
 
 function allCardsRevealed() {
     if (!state.gameActive || state.gameWon) return false;
-    // Only start auto-complete when stock is empty AND all cards are revealed
     if (state.stock.length > 0) return false;
     for (const col of state.tableau) {
         if (col.some(card => !card.faceUp)) return false;
@@ -1029,37 +874,6 @@ function makeCard(card) {
     return el;
 }
 
-// ===================== CONFIRMATION DIALOG =====================
-let confirmCallback = null;
-
-function showConfirm(title, message, onConfirm) {
-    confirmCallback = onConfirm;
-    document.getElementById('confirm-title').textContent = title;
-    document.getElementById('confirm-message').textContent = message;
-    document.getElementById('confirm-modal').classList.remove('hidden');
-}
-
-function hideConfirm() {
-    document.getElementById('confirm-modal').classList.add('hidden');
-    confirmCallback = null;
-}
-
-// ===================== GAME CONTROL FUNCTIONS =====================
-function restartGame() {
-    // Restart without recording as abandoned - just reset the current game
-    stopTimer();
-    clearSavedGame();
-    history = [];
-    redoStack = [];
-    autoCompleting = false;
-    selectedCard = null;
-    document.getElementById('undo-btn').disabled = true;
-    document.getElementById('redo-btn').disabled = true;
-    document.getElementById('win-modal').classList.add('hidden');
-
-    startNewGame(false); // false = don't record as abandoned
-}
-
 // ===================== EVENT LISTENERS =====================
 document.addEventListener('DOMContentLoaded', () => {
     initSupabase();
@@ -1068,37 +882,15 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('stock').addEventListener('touchend', e => { e.preventDefault(); drawFromStock(); });
     document.getElementById('undo-btn').addEventListener('click', undoMove);
     document.getElementById('undo-btn').disabled = true;
-    document.getElementById('redo-btn').addEventListener('click', redoMove);
-    document.getElementById('redo-btn').disabled = true;
-    document.getElementById('restart-btn').addEventListener('click', () => {
-        if (state.gameActive && !state.gameWon) {
-            showConfirm('Restart Game?', 'Start over with a new hand?', restartGame);
-        }
-    });
     document.getElementById('move-indicator').addEventListener('click', checkAndShowMoves);
 
-    document.getElementById('new-game-btn').addEventListener('click', () => {
-        if (state.gameActive && !state.gameWon) {
-            showConfirm('New Game?', 'Do you want to forfeit this game and start a new one?', async () => {
-                hideConfirm();
-                await startNewGame(true);
-            });
-        } else {
-            startNewGame(true);
-        }
+    document.getElementById('new-game-btn').addEventListener('click', async () => {
+        await startNewGame(true);
     });
-    document.getElementById('change-player-btn').addEventListener('click', () => {
-        if (state.gameActive && !state.gameWon) {
-            showConfirm('Change Player?', 'Do you want to forfeit this game and change players?', async () => {
-                hideConfirm();
-                await recordAbandoned();
-                state.gameActive = false;
-                showPlayerModal();
-            });
-        } else {
-            state.gameActive = false;
-            showPlayerModal();
-        }
+    document.getElementById('change-player-btn').addEventListener('click', async () => {
+        await recordAbandoned();
+        state.gameActive = false;
+        showPlayerModal();
     });
     document.getElementById('play-again-btn').addEventListener('click', () => startNewGame(false));
     document.getElementById('start-btn').addEventListener('click', tryCreatePlayer);
@@ -1106,13 +898,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Enter') tryCreatePlayer();
         else document.getElementById('name-error').textContent = '';
     });
-
-    // Confirmation dialog buttons
-    document.getElementById('confirm-yes-btn').addEventListener('click', () => {
-        hideConfirm();
-        if (confirmCallback) confirmCallback();
-    });
-    document.getElementById('confirm-no-btn').addEventListener('click', hideConfirm);
 
     window.addEventListener('beforeunload', saveGameState);
     window.addEventListener('pagehide', saveGameState);
