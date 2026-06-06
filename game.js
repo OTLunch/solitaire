@@ -932,13 +932,19 @@ document.addEventListener('DOMContentLoaded', () => {
     updateHistoryButtons();
     document.getElementById('move-indicator').addEventListener('click', checkAndShowMoves);
 
-    document.getElementById('new-game-btn').addEventListener('click', async () => {
+    document.getElementById('new-game-btn').addEventListener('click', () => {
+        if (state.gameActive && !state.gameWon) {
+            document.getElementById('confirm-modal').classList.remove('hidden');
+        } else {
+            startNewGame(true);
+        }
+    });
+    document.getElementById('confirm-yes-btn').addEventListener('click', async () => {
+        document.getElementById('confirm-modal').classList.add('hidden');
         await startNewGame(true);
     });
-    document.getElementById('change-player-btn').addEventListener('click', async () => {
-        await recordAbandoned();
-        state.gameActive = false;
-        showPlayerModal();
+    document.getElementById('confirm-no-btn').addEventListener('click', () => {
+        document.getElementById('confirm-modal').classList.add('hidden');
     });
     document.getElementById('play-again-btn').addEventListener('click', () => startNewGame(false));
     document.getElementById('start-btn').addEventListener('click', tryCreatePlayer);

@@ -470,6 +470,26 @@ button:disabled {
     z-index: 50 !important;
 }
 
+/* Confirm modal */
+.modal-content p {
+    font-size: 15px;
+    opacity: 0.85;
+    margin-bottom: 20px;
+}
+
+.confirm-buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+}
+
+.confirm-buttons button {
+    flex: 1;
+    padding: 10px;
+    font-size: 15px;
+    font-weight: 600;
+}
+
 /* Win modal */
 .win-content {
     background: linear-gradient(160deg, #0f5c32, #0a4025);

@@ -32,11 +32,22 @@
         </div>
     </div>
 
+    <!-- Confirm New Game Modal -->
+    <div id="confirm-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2>New Game?</h2>
+            <p>Are you sure you want to forfeit this game and start a new one?</p>
+            <div class="confirm-buttons">
+                <button id="confirm-yes-btn">Yes, New Game</button>
+                <button id="confirm-no-btn">Keep Playing</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Header -->
     <header>
         <div id="player-info">
             <span id="player-name-display">Player</span>
-            <button id="change-player-btn">Change Player</button>
         </div>
         <div id="stats-bar">
             <div class="stat"><span class="stat-label">Games</span><span id="stat-played">0</span></div>
