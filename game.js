@@ -336,6 +336,100 @@ async function selectPlayer(name) {
     if (saved) { restoreGameState(saved); } else { startNewGame(false); }
 }
 
+// ===================== WINNABILITY CHECK =====================
+function isWinnable(deck) {
+    // Build simulation state
+    const tab = Array.from({length: 7}, () => []);
+    let idx = 0;
+    for (let col = 0; col < 7; col++)
+        for (let row = 0; row <= col; row++)
+            tab[col].push({ suit: deck[idx].suit, value: deck[idx].value, up: row === col, n: numVal(deck[idx++]) });
+    const stock = deck.slice(idx).map(c => ({ suit: c.suit, value: c.value, up: false, n: numVal(c) }));
+    const waste = [];
+    const found = [[], [], [], []];
+
+    function fIdx(card) {
+        for (let fi = 0; fi < 4; fi++) {
+            const f = found[fi];
+            if (f.length === 0 && card.value === 'A') return fi;
+            if (f.length > 0 && f[f.length-1].suit === card.suit && card.n === f[f.length-1].n + 1) return fi;
+        }
+        return -1;
+    }
+
+    function canTab(card, col) {
+        const c = tab[col];
+        if (c.length === 0) return card.value === 'K';
+        const top = c[c.length-1];
+        return top.up && isRed(card) !== isRed(top) && card.n === top.n - 1;
+    }
+
+    let stockPasses = 0;
+    for (let cycle = 0; cycle < 500; cycle++) {
+        let moved = false;
+
+        // Waste → foundation
+        if (waste.length > 0) {
+            const fi = fIdx(waste[waste.length-1]);
+            if (fi !== -1) { found[fi].push(waste.pop()); moved = true; continue; }
+        }
+
+        // Tableau → foundation
+        for (let col = 0; col < 7; col++) {
+            const c = tab[col];
+            if (!c.length || !c[c.length-1].up) continue;
+            const fi = fIdx(c[c.length-1]);
+            if (fi !== -1) {
+                found[fi].push(c.pop());
+                if (c.length > 0) c[c.length-1].up = true;
+                moved = true; break;
+            }
+        }
+        if (moved) continue;
+
+        // Tableau → tableau (prioritise exposing face-down cards)
+        for (let col = 0; col < 7; col++) {
+            const c = tab[col];
+            let seqStart = c.length;
+            for (let i = 0; i < c.length; i++) if (c[i].up) { seqStart = i; break; }
+            if (seqStart === 0 || seqStart >= c.length) continue;
+            for (let tc = 0; tc < 7; tc++) {
+                if (tc === col || !canTab(c[seqStart], tc)) continue;
+                const seq = c.splice(seqStart);
+                tab[tc].push(...seq);
+                if (c.length > 0) c[c.length-1].up = true;
+                moved = true; break;
+            }
+            if (moved) break;
+        }
+        if (moved) continue;
+
+        // Waste → tableau
+        if (waste.length > 0) {
+            for (let tc = 0; tc < 7; tc++) {
+                if (!canTab(waste[waste.length-1], tc)) continue;
+                tab[tc].push(waste.pop()); moved = true; break;
+            }
+        }
+        if (moved) continue;
+
+        // Draw from stock
+        if (stock.length > 0) {
+            const c = stock.pop(); c.up = true; waste.push(c); moved = true; continue;
+        }
+
+        // Recycle waste (max 3 times)
+        if (waste.length > 0 && stockPasses < 3) {
+            stockPasses++;
+            while (waste.length) stock.push({ ...waste.pop(), up: false });
+            moved = true; continue;
+        }
+
+        break;
+    }
+    return found.reduce((s, f) => s + f.length, 0) === 52;
+}
+
 // ===================== DECK =====================
 function createDeck() {
     const deck = [];
@@ -372,7 +466,8 @@ async function startNewGame(countAbandoned = true) {
     updateHistoryButtons();
     document.getElementById('win-modal').classList.add('hidden');
 
-    const deck = shuffle(createDeck());
+    let deck;
+    do { deck = shuffle(createDeck()); } while (!isWinnable(deck));
     state.stock = []; state.waste = []; state.foundations = [[],[],[],[]];
     state.tableau = [[],[],[],[],[],[],[]];
     state.gameWon = false; state.gameActive = true;
