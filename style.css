@@ -429,6 +429,8 @@ button:disabled {
 #move-indicator {
     font-size: 13px;
     white-space: nowrap;
+    min-width: 130px;
+    text-align: center;
 }
 
 #move-indicator.moves-check {

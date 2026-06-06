@@ -608,7 +608,7 @@ function checkAndShowMoves() {
     if (el.className === 'moves-ok') { flashAvailableMove(); return; }
     if (!state.gameActive) return;
     if (hasAvailableMove()) {
-        el.textContent = '✓ Moves available — click to highlight';
+        el.textContent = '✓ Moves available';
         el.className = 'moves-ok';
     } else {
         el.textContent = '✗ No moves available';
