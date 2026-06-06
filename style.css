@@ -398,10 +398,31 @@ button:active {
 }
 #leaderboard-link:hover { background: rgba(255,255,255,0.25); }
 
-/* Undo button disabled state */
-#undo-btn:disabled {
+button:disabled {
     opacity: 0.35;
     cursor: default;
+}
+
+/* History controls — grouped transport buttons */
+#history-controls {
+    display: flex;
+    gap: 0;
+}
+
+#history-controls button {
+    padding: 6px 10px;
+    font-size: 15px;
+    border-radius: 0;
+    border-right-width: 0;
+}
+
+#history-controls button:first-child {
+    border-radius: 6px 0 0 6px;
+}
+
+#history-controls button:last-child {
+    border-radius: 0 6px 6px 0;
+    border-right-width: 1px;
 }
 
 

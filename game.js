@@ -21,6 +21,7 @@ let currentPlayer = null;
 let playerCache   = null;   // { name, played, wins, best_time }
 let dragInfo      = null;
 let history       = [];
+let redoStack     = [];
 let selectedCard  = null;   // { type, col, cardIdx } — click-to-move selection
 
 // ===================== TOUCH DRAG =====================
@@ -237,8 +238,8 @@ function loadSavedGame(playerName) {
 
 function restoreGameState(saved) {
     stopTimer();
-    history = [];
-    document.getElementById('undo-btn').disabled = true;
+    history = []; redoStack = [];
+    updateHistoryButtons();
     document.getElementById('win-modal').classList.add('hidden');
     state.stock = saved.stock; state.waste = saved.waste;
     state.foundations = saved.foundations; state.tableau = saved.tableau;
@@ -365,10 +366,10 @@ async function startNewGame(countAbandoned = true) {
     if (countAbandoned && state.gameActive && !state.gameWon) await recordAbandoned();
     stopTimer();
     clearSavedGame();
-    history = [];
+    history = []; redoStack = [];
     autoCompleting = false;
     selectedCard = null;
-    document.getElementById('undo-btn').disabled = true;
+    updateHistoryButtons();
     document.getElementById('win-modal').classList.add('hidden');
 
     const deck = shuffle(createDeck());
@@ -388,26 +389,70 @@ async function startNewGame(countAbandoned = true) {
     renderGame();
 }
 
-// ===================== UNDO =====================
-function saveToHistory() {
-    history.push({
+// ===================== UNDO / REDO =====================
+function snapshotState() {
+    return {
         stock:       JSON.parse(JSON.stringify(state.stock)),
         waste:       JSON.parse(JSON.stringify(state.waste)),
         foundations: JSON.parse(JSON.stringify(state.foundations)),
         tableau:     JSON.parse(JSON.stringify(state.tableau)),
         seconds:     state.seconds
-    });
-    document.getElementById('undo-btn').disabled = false;
+    };
+}
+
+function restoreSnapshot(snap) {
+    state.stock = snap.stock; state.waste = snap.waste;
+    state.foundations = snap.foundations; state.tableau = snap.tableau;
+    state.seconds = snap.seconds;
+    document.getElementById('timer').textContent = formatTime(state.seconds);
+}
+
+function updateHistoryButtons() {
+    const canUndo = history.length > 0;
+    const canRedo = redoStack.length > 0;
+    document.getElementById('rewind-btn').disabled = !canUndo;
+    document.getElementById('undo-btn').disabled = !canUndo;
+    document.getElementById('redo-btn').disabled = !canRedo;
+    document.getElementById('fastfwd-btn').disabled = !canRedo;
+}
+
+function saveToHistory() {
+    history.push(snapshotState());
+    redoStack = [];
+    updateHistoryButtons();
 }
 
 function undoMove() {
     if (history.length === 0) return;
-    const prev = history.pop();
-    state.stock = prev.stock; state.waste = prev.waste;
-    state.foundations = prev.foundations; state.tableau = prev.tableau;
-    state.seconds = prev.seconds;
-    document.getElementById('timer').textContent = formatTime(state.seconds);
-    document.getElementById('undo-btn').disabled = history.length === 0;
+    redoStack.push(snapshotState());
+    restoreSnapshot(history.pop());
+    updateHistoryButtons();
+    renderGame();
+}
+
+function redoMove() {
+    if (redoStack.length === 0) return;
+    history.push(snapshotState());
+    restoreSnapshot(redoStack.pop());
+    updateHistoryButtons();
+    renderGame();
+}
+
+function undoAll() {
+    if (history.length === 0) return;
+    redoStack.push(snapshotState());
+    while (history.length > 1) redoStack.push(history.pop());
+    restoreSnapshot(history.pop());
+    updateHistoryButtons();
+    renderGame();
+}
+
+function redoAll() {
+    if (redoStack.length === 0) return;
+    history.push(snapshotState());
+    while (redoStack.length > 1) history.push(redoStack.pop());
+    restoreSnapshot(redoStack.pop());
+    updateHistoryButtons();
     renderGame();
 }
 
@@ -880,8 +925,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('stock').addEventListener('click', () => { selectedCard = null; drawFromStock(); });
     document.getElementById('stock').addEventListener('touchend', e => { e.preventDefault(); drawFromStock(); });
+    document.getElementById('rewind-btn').addEventListener('click', undoAll);
     document.getElementById('undo-btn').addEventListener('click', undoMove);
-    document.getElementById('undo-btn').disabled = true;
+    document.getElementById('redo-btn').addEventListener('click', redoMove);
+    document.getElementById('fastfwd-btn').addEventListener('click', redoAll);
+    updateHistoryButtons();
     document.getElementById('move-indicator').addEventListener('click', checkAndShowMoves);
 
     document.getElementById('new-game-btn').addEventListener('click', async () => {

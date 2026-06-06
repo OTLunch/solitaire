@@ -47,7 +47,12 @@
         </div>
         <div id="game-controls">
             <span id="timer">0:00</span>
-            <button id="undo-btn" title="Undo last move">↩ Undo</button>
+            <div id="history-controls">
+                <button id="rewind-btn" title="Undo all moves">⏮</button>
+                <button id="undo-btn" title="Undo">◀</button>
+                <button id="redo-btn" title="Redo">▶</button>
+                <button id="fastfwd-btn" title="Redo all moves">⏭</button>
+            </div>
             <a href="leaderboard.html" id="leaderboard-link">🏆 Leaderboard</a>
             <button id="new-game-btn">New Game</button>
             <span id="move-indicator"></span>
