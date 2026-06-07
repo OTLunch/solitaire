@@ -659,7 +659,12 @@ function flashElement(el) {
 let autoCompleting = false;
 
 function allCardsRevealed() {
-    return state.gameActive && !state.gameWon && state.stock.length === 0;
+    if (!state.gameActive || state.gameWon) return false;
+    if (state.stock.length > 0) return false;
+    for (const col of state.tableau) {
+        if (col.some(card => !card.faceUp)) return false;
+    }
+    return true;
 }
 
 async function autoComplete() {
