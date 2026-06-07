@@ -659,12 +659,7 @@ function flashElement(el) {
 let autoCompleting = false;
 
 function allCardsRevealed() {
-    if (!state.gameActive || state.gameWon) return false;
-    if (state.stock.length > 0) return false;
-    for (const col of state.tableau) {
-        if (col.some(card => !card.faceUp)) return false;
-    }
-    return true;
+    return state.gameActive && !state.gameWon && state.stock.length === 0;
 }
 
 async function autoComplete() {
@@ -702,20 +697,23 @@ async function autoComplete() {
             }
         }
 
-        // Tableau → tableau to unblock a foundation move
+        // Tableau → tableau only to expose a face-down card (prevents cycling)
         if (!moved) {
             outer:
             for (let col = 0; col < 7; col++) {
                 const cards = state.tableau[col];
+                let seqStart = -1;
                 for (let i = 0; i < cards.length; i++) {
-                    if (!cards[i].faceUp) continue;
-                    for (let tc = 0; tc < 7; tc++) {
-                        if (tc !== col && canMoveToTableau(cards[i], tc)) {
-                            const seq = cards.splice(i);
-                            seq.forEach(c => state.tableau[tc].push(c));
-                            moved = true;
-                            break outer;
-                        }
+                    if (cards[i].faceUp) { seqStart = i; break; }
+                }
+                if (seqStart <= 0) continue; // no face-down card to expose
+                for (let tc = 0; tc < 7; tc++) {
+                    if (tc !== col && canMoveToTableau(cards[seqStart], tc)) {
+                        const seq = cards.splice(seqStart);
+                        seq.forEach(c => state.tableau[tc].push(c));
+                        if (cards.length > 0) cards[cards.length - 1].faceUp = true;
+                        moved = true;
+                        break outer;
                     }
                 }
             }
